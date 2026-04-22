@@ -1,4 +1,4 @@
-"""Workflow-level test for TeamWorkflow."""
+"""Workflow-level test for TeamWorkflow — full v0.3 fidelity."""
 
 from __future__ import annotations
 
@@ -16,14 +16,58 @@ from skills.team.workflow import TeamInput, TeamWorkflow
 
 @activity.defn(name="spawn_subagent")
 async def _fake(inp: SpawnSubagentInput) -> dict[str, str]:
-    if inp.role == "planner":
-        return {"SUBTASKS": json.dumps([{"id": "t1", "title": "Do it", "description": "Work"}])}
-    if inp.role == "analyst":
-        return {"ACCEPTANCE_CRITERIA": json.dumps([{"id": "c1", "criterion": "Done", "verification_hint": ""}])}
-    if inp.role == "worker":
-        return {"WORK_SUMMARY": "Implemented.", "FILES_TOUCHED": "[]"}
-    if inp.role == "verifier":
-        return {"VERDICT": "passed", "DEFECTS": "[]"}
+    role = inp.role
+    # Phase 1: plan
+    if role == "explore":
+        return {"CODEBASE_SUMMARY": "Small Python repo."}
+    if role == "planner":
+        return {
+            "SUBTASKS": json.dumps([
+                {"id": "t1", "title": "Implement widget", "description": "Widget impl", "files_likely_touched": []}
+            ]),
+            "PLAN_SUMMARY": "Build widget.",
+        }
+    if role == "plan-validator":
+        return {"VERDICT": "approved"}
+    # Phase 2: PRD
+    if role == "analyst":
+        return {
+            "ACCEPTANCE_CRITERIA": json.dumps([
+                {"id": "ac1", "criterion": "Widget exists", "verification_hint": "unit test"}
+            ])
+        }
+    if role == "critic":
+        return {"FINDING": ""}
+    if role == "falsifiability-judge":
+        return {
+            "UNFALSIFIABLE_COUNT": "0",
+            "AC_VERDICT": "ac1|falsifiable",
+            "VERDICT_SUMMARY": "all falsifiable",
+        }
+    # Phase 3: exec per-worker
+    if role.startswith("worker"):
+        return {"WORK_SUMMARY": "Implemented the widget.", "FILES_TOUCHED": "[]"}
+    if role.startswith("spec-compliance-reviewer"):
+        return {"VERDICT": "approved"}
+    if role.startswith("code-quality-reviewer"):
+        return {"VERDICT": "approved"}
+    # Phase 4: verify
+    if role.startswith("spec-a-reviewer") or role.startswith("spec-compliance"):
+        return {"VERDICT": "approved", "DEFECTS": "[]"}
+    if role.startswith("code-b-reviewer") or role.startswith("code-quality"):
+        return {"VERDICT": "approved", "DEFECTS": "[]"}
+    if role == "verify-judge":
+        return {
+            "VERDICT": "passed",
+            "CRITICAL_COUNT": "0",
+            "MAJOR_COUNT": "0",
+            "MINOR_COUNT": "0",
+        }
+    # Phase 5: fix (not exercised by happy path)
+    if role.startswith("fix-worker"):
+        return {"FIX_SUMMARY": "Fixed."}
+    if role.startswith("fix-verifier"):
+        return {"FIX_VERDICT": "fixed", "NEW_DEFECT_INTRODUCED": ""}
     return {}
 
 
@@ -54,7 +98,7 @@ async def test_team_workflow_happy_path(tmp_path) -> None:
                 id="team-1",
                 task_queue=TASK_QUEUE,
             )
-    assert "complete" in result
+    assert "complete" in result, f"Expected 'complete' in result, got: {result}"
     assert (tmp_path / "run" / "SUMMARY.md").exists()
     inbox_text = (tmp_path / "INBOX.md").read_text()
     assert "team-1" in inbox_text
