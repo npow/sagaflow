@@ -33,9 +33,10 @@ def build_registry() -> SkillRegistry:
 
     registry = SkillRegistry()
 
-    from skills import hello_world
+    from skills import deep_qa, hello_world
 
     hello_world.register(registry)
+    deep_qa.register(registry)
     return registry
 
 

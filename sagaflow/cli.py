@@ -41,7 +41,24 @@ def _start_workflow(skill: str, args: dict) -> str:  # type: ignore[type-arg]
         paths.ensure()
         run_dir = paths.run_dir_for(run_id)
         run_dir.mkdir(parents=True, exist_ok=True)
-        # For hello-world specifically:
+
+        # Prefer the skill's own build_input if it registered one.
+        if spec.build_input is not None:
+            wf_input = spec.build_input(
+                run_id=run_id,
+                run_dir=str(run_dir),
+                inbox_path=str(paths.inbox),
+                cli_args=args,
+            )
+            handle = await client.start_workflow(
+                spec.workflow_cls.run,
+                wf_input,
+                id=run_id,
+                task_queue=TASK_QUEUE,
+            )
+            return handle.id
+
+        # Back-compat path for hello-world, which registered before build_input existed.
         if skill == "hello-world":
             from skills.hello_world.workflow import HelloWorldInput
 
@@ -87,17 +104,51 @@ def _list_workflows() -> list[dict[str, str]]:
     return []
 
 
-@main.command()
+@main.command(
+    context_settings=dict(
+        ignore_unknown_options=True,
+        allow_extra_args=True,
+    )
+)
 @click.argument("skill")
-@click.option("--name", default="world", help="hello-world: greeting target name")
+@click.option("--name", default=None, help="hello-world back-compat: greeting target name")
+@click.option("--arg", "args_list", multiple=True, metavar="KEY=VALUE",
+              help="Skill-specific argument. Repeat for multiple: --arg key=value --arg k2=v2")
+@click.option("--path", default=None, help="Path input (artifact/spec/task file) for skills that take one")
 @click.option("--await", "await_result", is_flag=True, help="Block until the workflow finishes")
-def launch(skill: str, name: str, await_result: bool) -> None:
-    """Launch a skill workflow. Non-blocking by default; --await blocks on result."""
+@click.pass_context
+def launch(ctx: click.Context, skill: str, name: str | None, args_list: tuple[str, ...],
+           path: str | None, await_result: bool) -> None:
+    """Launch a skill workflow. Non-blocking by default; --await blocks on result.
+
+    Usage:
+      sagaflow launch hello-world --name alice --await
+      sagaflow launch deep-qa --path ./spec.md --arg type=doc --arg max_rounds=3
+    """
 
     _preflight_all()
     _ensure_hook_installed()
     _ensure_worker_running()
-    args = {"name": name}  # skill-specific; hello-world takes name
+
+    # Build the skill-specific args dict.
+    args: dict[str, object] = {}
+    if name is not None:
+        args["name"] = name
+    if path is not None:
+        args["path"] = path
+    for kv in args_list:
+        if "=" not in kv:
+            raise click.UsageError(f"--arg must be key=value, got {kv!r}")
+        k, _, v = kv.partition("=")
+        args[k.strip()] = v.strip()
+    # Any unrecognised positional args pass through as positional in args["_extra"].
+    if ctx.args:
+        args["_extra"] = list(ctx.args)
+
+    # Sensible defaults so hello-world keeps working with no flags.
+    if skill == "hello-world" and "name" not in args:
+        args["name"] = "world"
+
     workflow_id = _start_workflow(skill, args)
     click.echo(f"Launched {workflow_id}")
     if await_result:
