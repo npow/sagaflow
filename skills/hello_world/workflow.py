@@ -31,6 +31,9 @@ def _spawn_greeter(state_run_dir: str, prompt_path: str) -> dict[str, str]:
     raise NotImplementedError  # workflow uses execute_activity directly; this is a test hook
 
 
+# TODO(task-18): remove sandboxed=False once worker.run_worker registers
+# passthrough_modules=["httpx", "anthropic", "skillflow"] so skill code can
+# import activities without tripping the Temporal sandbox at class discovery.
 @workflow.defn(name="HelloWorldWorkflow", sandboxed=False)
 class HelloWorldWorkflow:
     @workflow.run
