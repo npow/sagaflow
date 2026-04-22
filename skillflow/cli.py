@@ -14,9 +14,62 @@ def main() -> None:
 
 
 # Stubs — CLI subcommands call these; tests patch them.
-def _preflight_all() -> None: ...
-def _start_workflow(skill: str, args: dict) -> str: ...  # type: ignore[type-arg]
-def _await_workflow(workflow_id: str) -> str: ...
+def _preflight_all() -> None:
+    import asyncio as _a
+    from skillflow.temporal_client import preflight
+
+    _a.run(preflight())
+
+
+def _start_workflow(skill: str, args: dict) -> str:  # type: ignore[type-arg]
+    import asyncio as _a
+    from datetime import datetime
+    from skillflow.temporal_client import TASK_QUEUE, connect
+    from skillflow.worker import build_registry
+
+    async def _go() -> str:
+        client = await connect()
+        registry = build_registry()
+        spec = registry.get(skill)
+        run_id = f"{skill}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        from skillflow.paths import Paths
+
+        paths = Paths.from_env()
+        paths.ensure()
+        run_dir = paths.run_dir_for(run_id)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        # For hello-world specifically:
+        if skill == "hello-world":
+            from skills.hello_world.workflow import HelloWorldInput
+
+            wf_input = HelloWorldInput(
+                run_id=run_id,
+                name=args["name"],
+                inbox_path=str(paths.inbox),
+                run_dir=str(run_dir),
+            )
+            handle = await client.start_workflow(
+                spec.workflow_cls.run,
+                wf_input,
+                id=run_id,
+                task_queue=TASK_QUEUE,
+            )
+            return handle.id
+        raise NotImplementedError(f"launch wiring missing for skill {skill!r}")
+
+    return _a.run(_go())
+
+
+def _await_workflow(workflow_id: str) -> str:
+    import asyncio as _a
+    from skillflow.temporal_client import connect
+
+    async def _go() -> str:
+        client = await connect()
+        handle = client.get_workflow_handle(workflow_id)
+        return await handle.result()
+
+    return _a.run(_go())
 
 
 # --- internals used by subcommands; patched in tests ---
