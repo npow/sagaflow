@@ -15,7 +15,6 @@ def main() -> None:
 
 # Stubs — CLI subcommands call these; tests patch them.
 def _preflight_all() -> None: ...
-def _ensure_hook_installed() -> None: ...
 def _start_workflow(skill: str, args: dict) -> str: ...  # type: ignore[type-arg]
 def _await_workflow(workflow_id: str) -> str: ...
 
@@ -95,13 +94,104 @@ def show(run_id: str) -> None:
 
 @main.group()
 def hook() -> None:
-    """Hook management (install / uninstall / session-start)."""
+    """Hook management (install / uninstall / session-start reader)."""
+
+
+@hook.command(name="install")
+def hook_install() -> None:
+    from skillflow.hook import install
+    install()
+    click.echo("hook installed")
+
+
+@hook.command(name="uninstall")
+def hook_uninstall() -> None:
+    from skillflow.hook import uninstall
+    uninstall()
+    click.echo("hook uninstalled")
+
+
+@hook.command(name="session-start")
+def hook_session_start() -> None:
+    from skillflow.hook import format_session_start_context
+    click.echo(format_session_start_context(inbox=_inbox()), nl=False)
+
+
+def _ensure_hook_installed() -> None:
+    from skillflow.hook import install, is_installed
+    if not is_installed():
+        install()
+
+
+# --- doctor probes ---
+
+
+def _probe_temporal() -> tuple[str, str | None]:
+    import asyncio as _a
+    from skillflow.temporal_client import TemporalUnreachable, preflight
+    try:
+        _a.run(preflight())
+        return ("OK", None)
+    except TemporalUnreachable as exc:
+        return ("FAIL", str(exc))
+
+
+def _probe_transport() -> tuple[str, str | None]:
+    import asyncio as _a
+    from skillflow.transport.anthropic_sdk import AnthropicSdkTransport, ModelTier
+    try:
+        async def _call() -> None:
+            await AnthropicSdkTransport().call(
+                tier=ModelTier.HAIKU,
+                system_prompt="ping",
+                user_prompt="ping",
+                max_tokens=8,
+            )
+        _a.run(_call())
+        return ("OK", None)
+    except Exception as exc:  # noqa: BLE001
+        return ("FAIL", str(exc))
+
+
+def _probe_worker() -> tuple[str, str | None]:
+    import asyncio as _a
+    from skillflow.temporal_client import connect
+    from skillflow.worker import _is_worker_reachable
+    try:
+        async def _go() -> bool:
+            client = await connect()
+            return await _is_worker_reachable(client)
+        running = _a.run(_go())
+        return ("OK", None) if running else ("WARN", "no worker polling; will auto-spawn on launch")
+    except Exception as exc:  # noqa: BLE001
+        return ("FAIL", str(exc))
+
+
+def _probe_hook() -> tuple[str, str | None]:
+    from skillflow.hook import is_installed
+    return ("OK", None) if is_installed() else ("WARN", "hook not installed; auto-installs on first launch")
 
 
 @main.command()
 def doctor() -> None:
-    """Run preflight checks (Temporal, transport, worker, hook)."""
-    click.echo("(not yet implemented — see Task 19)")
+    """Run preflight checks."""
+    checks = [
+        ("temporal", _probe_temporal),
+        ("transport", _probe_transport),
+        ("worker", _probe_worker),
+        ("hook", _probe_hook),
+    ]
+    any_fail = False
+    for label, probe in checks:
+        status, detail = probe()
+        msg = f"[{status}] {label}"
+        if detail:
+            msg += f": {detail}"
+        click.echo(msg)
+        if status == "FAIL":
+            any_fail = True
+    if any_fail:
+        sys.exit(1)
 
 
 @main.group()
