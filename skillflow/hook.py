@@ -1,4 +1,23 @@
-"""SessionStart hook installer + session-start context formatter."""
+"""SessionStart hook installer + session-start context formatter.
+
+Claude Code's hook schema groups commands under a matcher:
+
+    {
+      "hooks": {
+        "SessionStart": [
+          {
+            "matcher": "",
+            "hooks": [
+              {"type": "command", "command": "skillflow hook session-start"}
+            ]
+          }
+        ]
+      }
+    }
+
+This module preserves any existing matcher groups or non-skillflow commands
+in the same groups and only adds/removes the skillflow command entry.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +29,7 @@ from skillflow.inbox import Inbox
 
 HOOK_COMMAND = "skillflow hook session-start"
 HOOK_EVENT = "SessionStart"
+HOOK_MATCHER = ""  # empty matcher = match everything (Claude Code convention)
 
 
 def _default_settings_path() -> Path:
@@ -27,13 +47,23 @@ def _write(path: Path, data: dict) -> None:  # type: ignore[type-arg]
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
+def _inner_hooks(group: dict) -> list[dict]:  # type: ignore[type-arg]
+    inner = group.get("hooks")
+    return inner if isinstance(inner, list) else []
+
+
 def is_installed(*, settings_path: Path | None = None) -> bool:
     path = settings_path or _default_settings_path()
     data = _load(path)
     for event_list in data.get("hooks", {}).values():
-        for entry in event_list:
-            if entry.get("command") == HOOK_COMMAND:
-                return True
+        if not isinstance(event_list, list):
+            continue
+        for group in event_list:
+            if not isinstance(group, dict):
+                continue
+            for cmd in _inner_hooks(group):
+                if isinstance(cmd, dict) and cmd.get("command") == HOOK_COMMAND:
+                    return True
     return False
 
 
@@ -42,10 +72,36 @@ def install(*, settings_path: Path | None = None) -> None:
     data = _load(path)
     hooks = data.setdefault("hooks", {})
     event_list = hooks.setdefault(HOOK_EVENT, [])
-    for entry in event_list:
-        if entry.get("command") == HOOK_COMMAND:
+
+    # If our command is already in any matcher group, no-op.
+    for group in event_list:
+        if not isinstance(group, dict):
+            continue
+        for cmd in _inner_hooks(group):
+            if isinstance(cmd, dict) and cmd.get("command") == HOOK_COMMAND:
+                return
+
+    # Prefer to append into an existing empty-matcher group if one exists;
+    # otherwise create a new one. This keeps the file tidy when other skills
+    # share the same matcher.
+    #
+    # IMPORTANT: require BOTH keys to be schema-correct (matcher is a string,
+    # hooks is a list) before reusing. A legacy/corrupt entry without a
+    # matcher key would otherwise get implicitly treated as matcher="" and
+    # we would inject our command into a malformed neighbor.
+    our_entry = {"type": "command", "command": HOOK_COMMAND}
+    for group in event_list:
+        if (
+            isinstance(group, dict)
+            and isinstance(group.get("matcher"), str)
+            and group["matcher"] == HOOK_MATCHER
+            and isinstance(group.get("hooks"), list)
+        ):
+            group["hooks"].append(our_entry)
+            _write(path, data)
             return
-    event_list.append({"command": HOOK_COMMAND})
+
+    event_list.append({"matcher": HOOK_MATCHER, "hooks": [our_entry]})
     _write(path, data)
 
 
@@ -53,12 +109,28 @@ def uninstall(*, settings_path: Path | None = None) -> None:
     path = settings_path or _default_settings_path()
     data = _load(path)
     hooks = data.get("hooks", {})
-    if HOOK_EVENT not in hooks:
+    if HOOK_EVENT not in hooks or not isinstance(hooks[HOOK_EVENT], list):
         return
-    hooks[HOOK_EVENT] = [
-        entry for entry in hooks[HOOK_EVENT] if entry.get("command") != HOOK_COMMAND
-    ]
-    if not hooks[HOOK_EVENT]:
+
+    kept_groups: list[dict] = []  # type: ignore[type-arg]
+    for group in hooks[HOOK_EVENT]:
+        if not isinstance(group, dict):
+            kept_groups.append(group)
+            continue
+        inner = _inner_hooks(group)
+        kept_inner = [
+            cmd for cmd in inner
+            if not (isinstance(cmd, dict) and cmd.get("command") == HOOK_COMMAND)
+        ]
+        if not kept_inner:
+            continue  # drop the whole group if empty after removing our command
+        new_group = dict(group)
+        new_group["hooks"] = kept_inner
+        kept_groups.append(new_group)
+
+    if kept_groups:
+        hooks[HOOK_EVENT] = kept_groups
+    else:
         del hooks[HOOK_EVENT]
     _write(path, data)
 
