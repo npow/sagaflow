@@ -39,6 +39,7 @@ def test_launch_without_await_does_not_block() -> None:
     ):
         result = runner.invoke(main, ["launch", "hello-world", "--name", "bob"])
     assert result.exit_code == 0
+    start.assert_called_once()
     await_.assert_not_called()
 
 

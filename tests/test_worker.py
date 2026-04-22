@@ -1,9 +1,7 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
-import pytest
 
-from sagaflow.registry import SkillRegistry, SkillSpec
 from sagaflow.worker import build_registry, _is_worker_reachable
 
 

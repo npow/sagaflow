@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import sys
+from typing import TYPE_CHECKING, cast
 
 import click
+
+if TYPE_CHECKING:
+    from sagaflow.inbox import Inbox
 
 
 @click.group()
@@ -67,20 +70,20 @@ def _await_workflow(workflow_id: str) -> str:
     async def _go() -> str:
         client = await connect()
         handle = client.get_workflow_handle(workflow_id)
-        return await handle.result()
+        return cast(str, await handle.result())
 
     return _a.run(_go())
 
 
 # --- internals used by subcommands; patched in tests ---
-def _inbox():  # type: ignore[no-untyped-def]
+def _inbox() -> "Inbox":
     from sagaflow.inbox import Inbox
     from sagaflow.paths import Paths
     return Inbox(path=Paths.from_env().inbox)
 
 
-def _list_workflows() -> list[dict]:  # type: ignore[type-arg]
-    # Placeholder until Task 24 wires Temporal; return empty list.
+def _list_workflows() -> list[dict[str, str]]:
+    # Placeholder until a later task wires Temporal workflow listing.
     return []
 
 

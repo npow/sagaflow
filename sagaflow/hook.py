@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Any, cast
 
 from sagaflow.inbox import Inbox
 
@@ -36,13 +37,13 @@ def _default_settings_path() -> Path:
     return Path(os.environ["HOME"]) / ".claude" / "settings.json"
 
 
-def _load(path: Path) -> dict:  # type: ignore[type-arg]
+def _load(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+    return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
 
 
-def _write(path: Path, data: dict) -> None:  # type: ignore[type-arg]
+def _write(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 

@@ -9,7 +9,27 @@ description = "Temporal-backed workflow runtime for Claude Code skills"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
-authors = [{ name = "npow" }]
+authors = [{ name = "Nissan Pow", email = "nissan.pow@gmail.com" }]
+keywords = [
+    "temporal",
+    "workflow",
+    "orchestration",
+    "agents",
+    "llm",
+    "claude",
+    "durable-execution",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Distributed Computing",
+]
 dependencies = [
     "anthropic>=0.40.0",
     "click>=8.1.0",
@@ -25,8 +45,16 @@ dev = [
     "mypy>=1.10.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/npow/sagaflow"
+Repository = "https://github.com/npow/sagaflow"
+Issues = "https://github.com/npow/sagaflow/issues"
+
 [project.scripts]
 sagaflow = "sagaflow.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sagaflow", "skills"]
 
 [tool.ruff]
 line-length = 100

@@ -6,8 +6,8 @@ import asyncio
 import os
 import subprocess
 import sys
-from pathlib import Path
 
+from temporalio.api.taskqueue.v1 import TaskQueue
 from temporalio.api.workflowservice.v1 import DescribeTaskQueueRequest
 from temporalio.client import Client
 from temporalio.worker import Worker
@@ -39,10 +39,10 @@ def build_registry() -> SkillRegistry:
     return registry
 
 
-async def _is_worker_reachable(client: Client) -> bool:  # type: ignore[type-arg]
+async def _is_worker_reachable(client: Client) -> bool:
     try:
         resp = await client.service_client.workflow_service.describe_task_queue(
-            DescribeTaskQueueRequest(namespace=DEFAULT_NAMESPACE, task_queue={"name": TASK_QUEUE})
+            DescribeTaskQueueRequest(namespace=DEFAULT_NAMESPACE, task_queue=TaskQueue(name=TASK_QUEUE))
         )
     except Exception:  # noqa: BLE001
         return False

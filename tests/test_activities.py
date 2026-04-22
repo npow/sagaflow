@@ -1,4 +1,3 @@
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,7 +10,6 @@ from sagaflow.durable.activities import (
     spawn_subagent,
     write_artifact,
 )
-from sagaflow.transport.anthropic_sdk import ModelTier
 
 
 async def test_write_artifact_creates_file(tmp_path) -> None:
