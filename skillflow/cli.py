@@ -16,7 +16,6 @@ def main() -> None:
 # Stubs — CLI subcommands call these; tests patch them.
 def _preflight_all() -> None: ...
 def _ensure_hook_installed() -> None: ...
-def _ensure_worker_running() -> None: ...
 def _start_workflow(skill: str, args: dict) -> str: ...  # type: ignore[type-arg]
 def _await_workflow(workflow_id: str) -> str: ...
 
@@ -108,6 +107,26 @@ def doctor() -> None:
 @main.group()
 def worker() -> None:
     """Worker daemon lifecycle."""
+
+
+@worker.command(name="run")
+@click.option("--detached-child", is_flag=True, hidden=True)
+def worker_run(detached_child: bool) -> None:
+    """Foreground worker. Blocks until killed."""
+
+    import asyncio as _asyncio
+
+    from skillflow.worker import run_worker
+
+    _asyncio.run(run_worker())
+
+
+def _ensure_worker_running() -> None:
+    import asyncio as _asyncio
+
+    from skillflow.worker import ensure_worker_running
+
+    _asyncio.run(ensure_worker_running())
 
 
 if __name__ == "__main__":
