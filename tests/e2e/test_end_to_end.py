@@ -52,3 +52,52 @@ def test_hello_world_output_contains_greeting(tmp_path, monkeypatch) -> None:
         )
     assert result.exit_code == 0
     assert "bob" in result.output.lower() or "hello" in result.output.lower()
+
+
+def test_worker_kill_mid_run_resumes(tmp_path, monkeypatch) -> None:
+    """Launch → kill worker while running → restart worker → verify same result."""
+
+    import subprocess
+    import time
+
+    monkeypatch.setenv("SKILLFLOW_ROOT", str(tmp_path / "skillflow-root"))
+
+    # 1. Launch non-blocking
+    runner = CliRunner()
+    with patch("skillflow.durable.activities.notify_desktop"):
+        result = runner.invoke(
+            main, ["launch", "hello-world", "--name", "kitty"], catch_exceptions=False
+        )
+    assert result.exit_code == 0
+
+    # 2. Find the auto-spawned worker PID via pgrep; kill it.
+    pgrep = subprocess.run(
+        ["pgrep", "-f", "skillflow.cli worker run --detached-child"],
+        capture_output=True,
+        text=True,
+    )
+    pids = [int(p) for p in pgrep.stdout.strip().split() if p]
+    assert pids, "expected at least one auto-spawned worker"
+    for pid in pids:
+        os.kill(pid, 9)
+    time.sleep(1)
+
+    # 3. Run launch again (same skill, new run_id) — auto-spawn should revive a worker,
+    #    and the original workflow (still in Temporal history) should resume and complete.
+    with patch("skillflow.durable.activities.notify_desktop"):
+        result2 = runner.invoke(
+            main, ["launch", "hello-world", "--name", "spot", "--await"], catch_exceptions=False
+        )
+    assert result2.exit_code == 0
+
+    # 4. Both runs should now show up in INBOX as DONE.
+    inbox = Inbox(path=Path(tmp_path) / "skillflow-root" / "INBOX.md")
+    # Wait up to 15s for the first run to complete after worker revival.
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        entries = inbox.unread()
+        if sum(1 for e in entries if e.status == "DONE") >= 2:
+            break
+        time.sleep(0.5)
+    entries = inbox.unread()
+    assert sum(1 for e in entries if e.status == "DONE") >= 2
