@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from skillflow.durable.activities import (
+from sagaflow.durable.activities import (
     EmitFindingInput,
     SpawnSubagentInput,
     WriteArtifactInput,
@@ -11,7 +11,7 @@ from skillflow.durable.activities import (
     spawn_subagent,
     write_artifact,
 )
-from skillflow.transport.anthropic_sdk import ModelTier
+from sagaflow.transport.anthropic_sdk import ModelTier
 
 
 async def test_write_artifact_creates_file(tmp_path) -> None:
@@ -24,7 +24,7 @@ async def test_write_artifact_creates_file(tmp_path) -> None:
 
 async def test_emit_finding_appends_inbox_and_notifies(tmp_path) -> None:
     inbox_path = tmp_path / "INBOX.md"
-    with patch("skillflow.durable.activities.notify_desktop") as notif:
+    with patch("sagaflow.durable.activities.notify_desktop") as notif:
         await emit_finding(
             EmitFindingInput(
                 inbox_path=str(inbox_path),
@@ -42,7 +42,7 @@ async def test_emit_finding_appends_inbox_and_notifies(tmp_path) -> None:
 
 async def test_emit_finding_skips_notification_when_disabled(tmp_path) -> None:
     inbox_path = tmp_path / "INBOX.md"
-    with patch("skillflow.durable.activities.notify_desktop") as notif:
+    with patch("sagaflow.durable.activities.notify_desktop") as notif:
         await emit_finding(
             EmitFindingInput(
                 inbox_path=str(inbox_path),
@@ -70,8 +70,8 @@ async def test_spawn_subagent_returns_parsed_structured_output(tmp_path) -> None
     fake_sdk = MagicMock(call=sdk_call)
     fake_cli = MagicMock(call=AsyncMock())
     with (
-        patch("skillflow.durable.activities._get_sdk", return_value=fake_sdk),
-        patch("skillflow.durable.activities._get_cli", return_value=fake_cli),
+        patch("sagaflow.durable.activities._get_sdk", return_value=fake_sdk),
+        patch("sagaflow.durable.activities._get_cli", return_value=fake_cli),
     ):
         parsed = await spawn_subagent(
             SpawnSubagentInput(

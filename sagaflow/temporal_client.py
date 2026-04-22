@@ -8,7 +8,7 @@ from temporalio.client import Client
 
 DEFAULT_TARGET = "localhost:7233"
 DEFAULT_NAMESPACE = "default"
-TASK_QUEUE = "skillflow"
+TASK_QUEUE = "sagaflow"
 
 
 class TemporalUnreachable(RuntimeError):

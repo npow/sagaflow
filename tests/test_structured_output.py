@@ -1,6 +1,6 @@
 import pytest
 
-from skillflow.transport.structured_output import (
+from sagaflow.transport.structured_output import (
     MalformedResponseError,
     parse_structured,
 )

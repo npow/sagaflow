@@ -3,8 +3,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from skillflow.registry import SkillRegistry, SkillSpec
-from skillflow.worker import build_registry, _is_worker_reachable
+from sagaflow.registry import SkillRegistry, SkillSpec
+from sagaflow.worker import build_registry, _is_worker_reachable
 
 
 def fake_wf_cls():

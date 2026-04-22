@@ -1,4 +1,4 @@
-"""Filesystem layout for skillflow runtime state."""
+"""Filesystem layout for sagaflow runtime state."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class Paths:
-    """Resolves every skillflow filesystem location from a single root."""
+    """Resolves every sagaflow filesystem location from a single root."""
 
     root: Path
 
@@ -35,7 +35,7 @@ class Paths:
 
     @classmethod
     def from_env(cls) -> Paths:
-        override = os.environ.get("SKILLFLOW_ROOT")
+        override = os.environ.get("SAGAFLOW_ROOT")
         if override:
             return cls(root=Path(override))
-        return cls(root=Path(os.environ["HOME"]) / ".skillflow")
+        return cls(root=Path(os.environ["HOME"]) / ".sagaflow")

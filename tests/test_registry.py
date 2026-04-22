@@ -1,6 +1,6 @@
 import pytest
 
-from skillflow.registry import SkillRegistry, SkillSpec
+from sagaflow.registry import SkillRegistry, SkillSpec
 
 
 def fake_workflow_cls():

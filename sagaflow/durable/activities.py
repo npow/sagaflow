@@ -1,4 +1,4 @@
-"""Base activities shared by every skillflow skill."""
+"""Base activities shared by every sagaflow skill."""
 
 from __future__ import annotations
 
@@ -8,12 +8,12 @@ from pathlib import Path
 
 from temporalio import activity
 
-from skillflow.inbox import Inbox, InboxEntry
-from skillflow.notify import notify_desktop
-from skillflow.transport.anthropic_sdk import AnthropicSdkTransport, ModelTier
-from skillflow.transport.claude_cli import ClaudeCliTransport
-from skillflow.transport.dispatcher import SubagentRequest, dispatch_subagent
-from skillflow.transport.structured_output import parse_structured
+from sagaflow.inbox import Inbox, InboxEntry
+from sagaflow.notify import notify_desktop
+from sagaflow.transport.anthropic_sdk import AnthropicSdkTransport, ModelTier
+from sagaflow.transport.claude_cli import ClaudeCliTransport
+from sagaflow.transport.dispatcher import SubagentRequest, dispatch_subagent
+from sagaflow.transport.structured_output import parse_structured
 
 
 @dataclass(frozen=True)
@@ -54,7 +54,7 @@ async def emit_finding(inp: EmitFindingInput) -> None:
     )
     if inp.notify:
         notify_desktop(
-            title=f"skillflow: {inp.run_id} {inp.status}",
+            title=f"sagaflow: {inp.run_id} {inp.status}",
             body=inp.summary or inp.skill,
         )
 

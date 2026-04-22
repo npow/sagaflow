@@ -13,8 +13,8 @@ jobs:
       - name: Install
         run: pip install -e ".[dev]"
       - name: Lint
-        run: ruff check skillflow tests
+        run: ruff check sagaflow tests
       - name: Type-check
-        run: mypy skillflow
+        run: mypy sagaflow
       - name: Test
-        run: pytest -v --cov=skillflow
+        run: pytest -v --cov=sagaflow

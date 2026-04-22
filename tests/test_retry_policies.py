@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from skillflow.durable.retry_policies import (
+from sagaflow.durable.retry_policies import (
     CLI_POLICY,
     HAIKU_POLICY,
     NON_RETRYABLE_ERRORS,

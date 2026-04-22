@@ -2,7 +2,7 @@ from datetime import datetime
 
 import pytest
 
-from skillflow.inbox import InboxEntry, Inbox
+from sagaflow.inbox import InboxEntry, Inbox
 
 
 def test_append_and_unread(tmp_path) -> None:

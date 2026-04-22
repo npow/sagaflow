@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from skillflow.durable.state import WorkflowState
+from sagaflow.durable.state import WorkflowState
 
 
 @dataclass

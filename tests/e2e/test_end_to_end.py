@@ -17,22 +17,22 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner
 
-from skillflow.cli import main
-from skillflow.inbox import Inbox
+from sagaflow.cli import main
+from sagaflow.inbox import Inbox
 
 
 pytestmark = pytest.mark.skipif(
-    not os.environ.get("SKILLFLOW_E2E"),
-    reason="set SKILLFLOW_E2E=1 to run end-to-end tests",
+    not os.environ.get("SAGAFLOW_E2E"),
+    reason="set SAGAFLOW_E2E=1 to run end-to-end tests",
 )
 
 
 def test_hello_world_end_to_end(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("SKILLFLOW_ROOT", str(tmp_path / "skillflow-root"))
-    inbox_path = Path(tmp_path) / "skillflow-root" / "INBOX.md"
+    monkeypatch.setenv("SAGAFLOW_ROOT", str(tmp_path / "sagaflow-root"))
+    inbox_path = Path(tmp_path) / "sagaflow-root" / "INBOX.md"
 
     runner = CliRunner()
-    with patch("skillflow.durable.activities.notify_desktop"):
+    with patch("sagaflow.durable.activities.notify_desktop"):
         result = runner.invoke(
             main, ["launch", "hello-world", "--name", "alice", "--await"], catch_exceptions=False
         )
@@ -44,9 +44,9 @@ def test_hello_world_end_to_end(tmp_path, monkeypatch) -> None:
 
 
 def test_hello_world_output_contains_greeting(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("SKILLFLOW_ROOT", str(tmp_path / "skillflow-root"))
+    monkeypatch.setenv("SAGAFLOW_ROOT", str(tmp_path / "sagaflow-root"))
     runner = CliRunner()
-    with patch("skillflow.durable.activities.notify_desktop"):
+    with patch("sagaflow.durable.activities.notify_desktop"):
         result = runner.invoke(
             main, ["launch", "hello-world", "--name", "bob", "--await"], catch_exceptions=False
         )
@@ -60,11 +60,11 @@ def test_worker_kill_mid_run_resumes(tmp_path, monkeypatch) -> None:
     import subprocess
     import time
 
-    monkeypatch.setenv("SKILLFLOW_ROOT", str(tmp_path / "skillflow-root"))
+    monkeypatch.setenv("SAGAFLOW_ROOT", str(tmp_path / "sagaflow-root"))
 
     # 1. Launch non-blocking
     runner = CliRunner()
-    with patch("skillflow.durable.activities.notify_desktop"):
+    with patch("sagaflow.durable.activities.notify_desktop"):
         result = runner.invoke(
             main, ["launch", "hello-world", "--name", "kitty"], catch_exceptions=False
         )
@@ -72,7 +72,7 @@ def test_worker_kill_mid_run_resumes(tmp_path, monkeypatch) -> None:
 
     # 2. Find the auto-spawned worker PID via pgrep; kill it.
     pgrep = subprocess.run(
-        ["pgrep", "-f", "skillflow.cli worker run --detached-child"],
+        ["pgrep", "-f", "sagaflow.cli worker run --detached-child"],
         capture_output=True,
         text=True,
     )
@@ -84,14 +84,14 @@ def test_worker_kill_mid_run_resumes(tmp_path, monkeypatch) -> None:
 
     # 3. Run launch again (same skill, new run_id) — auto-spawn should revive a worker,
     #    and the original workflow (still in Temporal history) should resume and complete.
-    with patch("skillflow.durable.activities.notify_desktop"):
+    with patch("sagaflow.durable.activities.notify_desktop"):
         result2 = runner.invoke(
             main, ["launch", "hello-world", "--name", "spot", "--await"], catch_exceptions=False
         )
     assert result2.exit_code == 0
 
     # 4. Both runs should now show up in INBOX as DONE.
-    inbox = Inbox(path=Path(tmp_path) / "skillflow-root" / "INBOX.md")
+    inbox = Inbox(path=Path(tmp_path) / "sagaflow-root" / "INBOX.md")
     # Wait up to 15s for the first run to complete after worker revival.
     deadline = time.time() + 15
     while time.time() < deadline:

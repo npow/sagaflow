@@ -1,4 +1,4 @@
-"""Base workflow state shared by every skillflow skill."""
+"""Base workflow state shared by every sagaflow skill."""
 
 from __future__ import annotations
 

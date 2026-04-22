@@ -1,6 +1,6 @@
 import pytest
 
-from skillflow.durable.state import ActivityOutcome, WorkflowState
+from sagaflow.durable.state import ActivityOutcome, WorkflowState
 
 
 def test_increment_generation_is_monotonic() -> None:

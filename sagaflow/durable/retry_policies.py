@@ -1,4 +1,4 @@
-"""Shared retry policies for every skillflow activity.
+"""Shared retry policies for every sagaflow activity.
 
 Tiers: Haiku (cheap, fast, more retries OK), Sonnet (dearer, identical policy
 currently), CLI subprocess (longer intervals because cold-start is expensive)."""

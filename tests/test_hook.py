@@ -1,7 +1,7 @@
 import json
 from datetime import datetime
 
-from skillflow.hook import (
+from sagaflow.hook import (
     HOOK_COMMAND,
     HOOK_EVENT,
     HOOK_MATCHER,
@@ -10,7 +10,7 @@ from skillflow.hook import (
     is_installed,
     uninstall,
 )
-from skillflow.inbox import InboxEntry, Inbox
+from sagaflow.inbox import InboxEntry, Inbox
 
 
 def _find_our_commands(data: dict) -> list[dict]:  # type: ignore[type-arg]
@@ -143,7 +143,7 @@ def test_format_session_start_context_with_entries(tmp_path) -> None:
         )
     )
     ctx = format_session_start_context(inbox=inbox)
-    assert "Unread skillflow runs" in ctx
+    assert "Unread sagaflow runs" in ctx
     assert "r1" in ctx
     assert "DONE" in ctx
 
@@ -195,7 +195,7 @@ def _assert_valid_hook_schema(data: dict) -> None:  # type: ignore[type-arg]
         # we do assert our own event falls in the allowed set as a sanity check.
         if event_name == HOOK_EVENT:
             assert event_name in _ALLOWED_HOOK_EVENTS, (
-                f"skillflow's event {event_name!r} must be a documented Claude Code event"
+                f"sagaflow's event {event_name!r} must be a documented Claude Code event"
             )
 
         assert isinstance(event_list, list), (

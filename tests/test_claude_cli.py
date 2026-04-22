@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from skillflow.transport.claude_cli import ClaudeCliTransport, ClaudeCliResult, ClaudeCliError
+from sagaflow.transport.claude_cli import ClaudeCliTransport, ClaudeCliResult, ClaudeCliError
 
 
 @pytest.fixture

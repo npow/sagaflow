@@ -1,9 +1,9 @@
 from pathlib import Path
 
-from skillflow.paths import Paths
+from sagaflow.paths import Paths
 
 
-def test_paths_default_home_is_dot_skillflow(tmp_path: Path) -> None:
+def test_paths_default_home_is_dot_sagaflow(tmp_path: Path) -> None:
     p = Paths(root=tmp_path)
     assert p.root == tmp_path
     assert p.inbox == tmp_path / "INBOX.md"
@@ -25,13 +25,13 @@ def test_ensure_creates_directories(tmp_path: Path) -> None:
 
 
 def test_from_env_respects_override(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("SKILLFLOW_ROOT", str(tmp_path / "custom"))
+    monkeypatch.setenv("SAGAFLOW_ROOT", str(tmp_path / "custom"))
     p = Paths.from_env()
     assert p.root == tmp_path / "custom"
 
 
 def test_from_env_defaults_to_home(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.delenv("SKILLFLOW_ROOT", raising=False)
+    monkeypatch.delenv("SAGAFLOW_ROOT", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     p = Paths.from_env()
-    assert p.root == tmp_path / ".skillflow"
+    assert p.root == tmp_path / ".sagaflow"

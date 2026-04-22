@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from skillflow.notify import notify_desktop, _macos_command, _linux_command
+from sagaflow.notify import notify_desktop, _macos_command, _linux_command
 
 
 def test_macos_command_structure() -> None:
@@ -19,8 +19,8 @@ def test_linux_command_structure() -> None:
 
 def test_notify_desktop_macos_calls_osascript() -> None:
     with (
-        patch("skillflow.notify._PLATFORM", "darwin"),
-        patch("skillflow.notify.subprocess.run") as mock_run,
+        patch("sagaflow.notify._PLATFORM", "darwin"),
+        patch("sagaflow.notify.subprocess.run") as mock_run,
     ):
         notify_desktop(title="Hi", body="There")
     assert mock_run.call_args[0][0][0] == "osascript"
@@ -28,16 +28,16 @@ def test_notify_desktop_macos_calls_osascript() -> None:
 
 def test_notify_desktop_swallows_errors() -> None:
     with (
-        patch("skillflow.notify._PLATFORM", "darwin"),
-        patch("skillflow.notify.subprocess.run", side_effect=OSError("no binary")),
+        patch("sagaflow.notify._PLATFORM", "darwin"),
+        patch("sagaflow.notify.subprocess.run", side_effect=OSError("no binary")),
     ):
         notify_desktop(title="Hi", body="There")  # must not raise
 
 
 def test_notify_desktop_unknown_platform_is_noop() -> None:
     with (
-        patch("skillflow.notify._PLATFORM", "windows"),
-        patch("skillflow.notify.subprocess.run") as mock_run,
+        patch("sagaflow.notify._PLATFORM", "windows"),
+        patch("sagaflow.notify.subprocess.run") as mock_run,
     ):
         notify_desktop(title="Hi", body="There")
     mock_run.assert_not_called()

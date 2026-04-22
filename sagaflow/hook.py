@@ -8,15 +8,15 @@ Claude Code's hook schema groups commands under a matcher:
           {
             "matcher": "",
             "hooks": [
-              {"type": "command", "command": "skillflow hook session-start"}
+              {"type": "command", "command": "sagaflow hook session-start"}
             ]
           }
         ]
       }
     }
 
-This module preserves any existing matcher groups or non-skillflow commands
-in the same groups and only adds/removes the skillflow command entry.
+This module preserves any existing matcher groups or non-sagaflow commands
+in the same groups and only adds/removes the sagaflow command entry.
 """
 
 from __future__ import annotations
@@ -25,9 +25,9 @@ import json
 import os
 from pathlib import Path
 
-from skillflow.inbox import Inbox
+from sagaflow.inbox import Inbox
 
-HOOK_COMMAND = "skillflow hook session-start"
+HOOK_COMMAND = "sagaflow hook session-start"
 HOOK_EVENT = "SessionStart"
 HOOK_MATCHER = ""  # empty matcher = match everything (Claude Code convention)
 
@@ -139,10 +139,10 @@ def format_session_start_context(*, inbox: Inbox) -> str:
     entries = inbox.unread()
     if not entries:
         return ""
-    lines = ["Unread skillflow runs:"]
+    lines = ["Unread sagaflow runs:"]
     for e in entries:
         lines.append(
             f"- {e.run_id} {e.status} {e.skill}  {e.summary}"
-            f"  (skillflow show {e.run_id})"
+            f"  (sagaflow show {e.run_id})"
         )
     return "\n".join(lines) + "\n"

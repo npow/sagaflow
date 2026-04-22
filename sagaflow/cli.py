@@ -1,4 +1,4 @@
-"""skillflow CLI entry point."""
+"""sagaflow CLI entry point."""
 
 from __future__ import annotations
 
@@ -10,13 +10,13 @@ import click
 
 @click.group()
 def main() -> None:
-    """skillflow — Temporal-backed workflow runtime for Claude Code skills."""
+    """sagaflow — Temporal-backed workflow runtime for Claude Code skills."""
 
 
 # Stubs — CLI subcommands call these; tests patch them.
 def _preflight_all() -> None:
     import asyncio as _a
-    from skillflow.temporal_client import preflight
+    from sagaflow.temporal_client import preflight
 
     _a.run(preflight())
 
@@ -24,15 +24,15 @@ def _preflight_all() -> None:
 def _start_workflow(skill: str, args: dict) -> str:  # type: ignore[type-arg]
     import asyncio as _a
     from datetime import datetime
-    from skillflow.temporal_client import TASK_QUEUE, connect
-    from skillflow.worker import build_registry
+    from sagaflow.temporal_client import TASK_QUEUE, connect
+    from sagaflow.worker import build_registry
 
     async def _go() -> str:
         client = await connect()
         registry = build_registry()
         spec = registry.get(skill)
         run_id = f"{skill}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-        from skillflow.paths import Paths
+        from sagaflow.paths import Paths
 
         paths = Paths.from_env()
         paths.ensure()
@@ -62,7 +62,7 @@ def _start_workflow(skill: str, args: dict) -> str:  # type: ignore[type-arg]
 
 def _await_workflow(workflow_id: str) -> str:
     import asyncio as _a
-    from skillflow.temporal_client import connect
+    from sagaflow.temporal_client import connect
 
     async def _go() -> str:
         client = await connect()
@@ -74,8 +74,8 @@ def _await_workflow(workflow_id: str) -> str:
 
 # --- internals used by subcommands; patched in tests ---
 def _inbox():  # type: ignore[no-untyped-def]
-    from skillflow.inbox import Inbox
-    from skillflow.paths import Paths
+    from sagaflow.inbox import Inbox
+    from sagaflow.paths import Paths
     return Inbox(path=Paths.from_env().inbox)
 
 
@@ -137,7 +137,7 @@ def dismiss(run_id: str) -> None:
 @click.argument("run_id")
 def show(run_id: str) -> None:
     """Dump the final report for a run."""
-    from skillflow.paths import Paths
+    from sagaflow.paths import Paths
     report = Paths.from_env().run_dir_for(run_id) / "report.md"
     if not report.exists():
         click.echo(f"no report at {report}")
@@ -152,26 +152,26 @@ def hook() -> None:
 
 @hook.command(name="install")
 def hook_install() -> None:
-    from skillflow.hook import install
+    from sagaflow.hook import install
     install()
     click.echo("hook installed")
 
 
 @hook.command(name="uninstall")
 def hook_uninstall() -> None:
-    from skillflow.hook import uninstall
+    from sagaflow.hook import uninstall
     uninstall()
     click.echo("hook uninstalled")
 
 
 @hook.command(name="session-start")
 def hook_session_start() -> None:
-    from skillflow.hook import format_session_start_context
+    from sagaflow.hook import format_session_start_context
     click.echo(format_session_start_context(inbox=_inbox()), nl=False)
 
 
 def _ensure_hook_installed() -> None:
-    from skillflow.hook import install, is_installed
+    from sagaflow.hook import install, is_installed
     if not is_installed():
         install()
 
@@ -181,7 +181,7 @@ def _ensure_hook_installed() -> None:
 
 def _probe_temporal() -> tuple[str, str | None]:
     import asyncio as _a
-    from skillflow.temporal_client import TemporalUnreachable, preflight
+    from sagaflow.temporal_client import TemporalUnreachable, preflight
     try:
         _a.run(preflight())
         return ("OK", None)
@@ -191,7 +191,7 @@ def _probe_temporal() -> tuple[str, str | None]:
 
 def _probe_transport() -> tuple[str, str | None]:
     import asyncio as _a
-    from skillflow.transport.anthropic_sdk import AnthropicSdkTransport, ModelTier
+    from sagaflow.transport.anthropic_sdk import AnthropicSdkTransport, ModelTier
     try:
         async def _call() -> None:
             await AnthropicSdkTransport().call(
@@ -208,8 +208,8 @@ def _probe_transport() -> tuple[str, str | None]:
 
 def _probe_worker() -> tuple[str, str | None]:
     import asyncio as _a
-    from skillflow.temporal_client import connect
-    from skillflow.worker import _is_worker_reachable
+    from sagaflow.temporal_client import connect
+    from sagaflow.worker import _is_worker_reachable
     try:
         async def _go() -> bool:
             client = await connect()
@@ -221,7 +221,7 @@ def _probe_worker() -> tuple[str, str | None]:
 
 
 def _probe_hook() -> tuple[str, str | None]:
-    from skillflow.hook import is_installed
+    from sagaflow.hook import is_installed
     return ("OK", None) if is_installed() else ("WARN", "hook not installed; auto-installs on first launch")
 
 
@@ -259,7 +259,7 @@ def worker_run(detached_child: bool) -> None:
 
     import asyncio as _asyncio
 
-    from skillflow.worker import run_worker
+    from sagaflow.worker import run_worker
 
     _asyncio.run(run_worker())
 
@@ -267,7 +267,7 @@ def worker_run(detached_child: bool) -> None:
 def _ensure_worker_running() -> None:
     import asyncio as _asyncio
 
-    from skillflow.worker import ensure_worker_running
+    from sagaflow.worker import ensure_worker_running
 
     _asyncio.run(ensure_worker_running())
 

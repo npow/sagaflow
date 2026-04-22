@@ -13,16 +13,16 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
-from skillflow.paths import Paths
-from skillflow.registry import SkillRegistry
-from skillflow.temporal_client import DEFAULT_NAMESPACE, DEFAULT_TARGET, TASK_QUEUE, connect
+from sagaflow.paths import Paths
+from sagaflow.registry import SkillRegistry
+from sagaflow.temporal_client import DEFAULT_NAMESPACE, DEFAULT_TARGET, TASK_QUEUE, connect
 
 
-_PASSTHROUGH_MODULES = ("httpx", "anthropic", "skillflow")
+_PASSTHROUGH_MODULES = ("httpx", "anthropic", "sagaflow")
 
 
 def _build_sandbox_runner() -> SandboxedWorkflowRunner:
-    """Sandbox runner with httpx/anthropic/skillflow allowed through import validation."""
+    """Sandbox runner with httpx/anthropic/sagaflow allowed through import validation."""
 
     restrictions = SandboxRestrictions.default.with_passthrough_modules(*_PASSTHROUGH_MODULES)
     return SandboxedWorkflowRunner(restrictions=restrictions)
@@ -50,7 +50,7 @@ async def _is_worker_reachable(client: Client) -> bool:  # type: ignore[type-arg
 
 
 async def ensure_worker_running(*, target: str = DEFAULT_TARGET) -> None:
-    """If no worker is polling the queue, fork `skillflow worker run --detached-child`."""
+    """If no worker is polling the queue, fork `sagaflow worker run --detached-child`."""
 
     client = await connect(target=target)
     if await _is_worker_reachable(client):
@@ -59,7 +59,7 @@ async def ensure_worker_running(*, target: str = DEFAULT_TARGET) -> None:
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / f"worker-{os.getpid()}.log"
     subprocess.Popen(
-        [sys.executable, "-m", "skillflow.cli", "worker", "run", "--detached-child"],
+        [sys.executable, "-m", "sagaflow.cli", "worker", "run", "--detached-child"],
         stdout=log_file.open("ab"),
         stderr=subprocess.STDOUT,
         start_new_session=True,

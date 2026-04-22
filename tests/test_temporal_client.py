@@ -1,6 +1,6 @@
 import pytest
 
-from skillflow.temporal_client import (
+from sagaflow.temporal_client import (
     DEFAULT_NAMESPACE,
     DEFAULT_TARGET,
     TASK_QUEUE,
@@ -27,4 +27,4 @@ async def test_preflight_succeeds_against_running_server() -> None:
 def test_constants_hold_expected_defaults() -> None:
     assert DEFAULT_TARGET == "localhost:7233"
     assert DEFAULT_NAMESPACE == "default"
-    assert TASK_QUEUE == "skillflow"
+    assert TASK_QUEUE == "sagaflow"

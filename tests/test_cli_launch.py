@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 from click.testing import CliRunner
 
-from skillflow.cli import main
+from sagaflow.cli import main
 
 
 def test_help_lists_subcommands() -> None:
@@ -16,11 +16,11 @@ def test_help_lists_subcommands() -> None:
 def test_launch_prints_workflow_id() -> None:
     runner = CliRunner()
     with (
-        patch("skillflow.cli._preflight_all"),
-        patch("skillflow.cli._ensure_hook_installed"),
-        patch("skillflow.cli._ensure_worker_running"),
-        patch("skillflow.cli._start_workflow", return_value="hello-world-test-1") as start,
-        patch("skillflow.cli._await_workflow", return_value="greeting"),
+        patch("sagaflow.cli._preflight_all"),
+        patch("sagaflow.cli._ensure_hook_installed"),
+        patch("sagaflow.cli._ensure_worker_running"),
+        patch("sagaflow.cli._start_workflow", return_value="hello-world-test-1") as start,
+        patch("sagaflow.cli._await_workflow", return_value="greeting"),
     ):
         result = runner.invoke(main, ["launch", "hello-world", "--name", "alice"])
     assert result.exit_code == 0
@@ -31,11 +31,11 @@ def test_launch_prints_workflow_id() -> None:
 def test_launch_without_await_does_not_block() -> None:
     runner = CliRunner()
     with (
-        patch("skillflow.cli._preflight_all"),
-        patch("skillflow.cli._ensure_hook_installed"),
-        patch("skillflow.cli._ensure_worker_running"),
-        patch("skillflow.cli._start_workflow", return_value="wf-id") as start,
-        patch("skillflow.cli._await_workflow") as await_,
+        patch("sagaflow.cli._preflight_all"),
+        patch("sagaflow.cli._ensure_hook_installed"),
+        patch("sagaflow.cli._ensure_worker_running"),
+        patch("sagaflow.cli._start_workflow", return_value="wf-id") as start,
+        patch("sagaflow.cli._await_workflow") as await_,
     ):
         result = runner.invoke(main, ["launch", "hello-world", "--name", "bob"])
     assert result.exit_code == 0
@@ -45,11 +45,11 @@ def test_launch_without_await_does_not_block() -> None:
 def test_launch_await_blocks_on_result() -> None:
     runner = CliRunner()
     with (
-        patch("skillflow.cli._preflight_all"),
-        patch("skillflow.cli._ensure_hook_installed"),
-        patch("skillflow.cli._ensure_worker_running"),
-        patch("skillflow.cli._start_workflow", return_value="wf-id"),
-        patch("skillflow.cli._await_workflow", return_value="hello, bob") as await_,
+        patch("sagaflow.cli._preflight_all"),
+        patch("sagaflow.cli._ensure_hook_installed"),
+        patch("sagaflow.cli._ensure_worker_running"),
+        patch("sagaflow.cli._start_workflow", return_value="wf-id"),
+        patch("sagaflow.cli._await_workflow", return_value="hello, bob") as await_,
     ):
         result = runner.invoke(main, ["launch", "hello-world", "--name", "bob", "--await"])
     assert result.exit_code == 0
