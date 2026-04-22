@@ -91,6 +91,26 @@ worker daemon polls task queue "sagaflow"
 
 If the worker crashes mid-run, the next `sagaflow launch` auto-spawns a fresh one and Temporal resumes from the last completed activity.
 
+## Built-in skills
+
+sagaflow ships with 11 skills. Each is a Python package under `skills/` that plugs into the runtime via `register(registry)`:
+
+| Skill | What it does |
+|---|---|
+| `hello-world` | Framework smoke test — greets a name and emits a finding |
+| `deep-qa` | Multi-round QA of docs, code, research, or skills with parallel critics and synthesis |
+| `deep-debug` | Hypothesis-driven debugging: generate → judge → synthesize root-cause report |
+| `deep-research` | WHO/WHAT/HOW/WHERE/WHEN/WHY dimension expansion with per-direction findings |
+| `deep-design` | Draft spec → critique × N → redesign → final spec.md |
+| `deep-plan` | Planner → Architect → Critic consensus loop with ADR output |
+| `proposal-reviewer` | Claim extraction + 4-dimension critique + fact-check + assembly |
+| `team` | Plan → PRD → N parallel workers → verify → fix loop |
+| `autopilot` | Expand → plan → exec → qa → validate (3 judges) → completion report |
+| `loop-until-done` | PRD + falsifiability judge + per-criterion verify loop until all pass |
+| `flaky-test-diagnoser` | Multi-run N × → hypothesis generation → judge → report |
+
+All skills use the same transport layer (Anthropic SDK or `claude -p` subprocess) and the same 4-layer result-surfacing (INBOX → SessionStart hook → desktop notify → `--await` return).
+
 ## Writing a new skill
 
 See [`docs/SKILL-TEMPLATE.md`](docs/SKILL-TEMPLATE.md). The minimal skill is `skills/hello_world/` (~100 lines), which exercises every framework surface without importing anything skill-specific from the framework core.
