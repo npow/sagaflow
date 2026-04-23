@@ -78,6 +78,14 @@ class DeepPlanInput:
     max_iter: int = 5
     deliberate: bool = False
     notify: bool = True
+    planner_system_prompt: str = ""
+    planner_user_prompt: str = ""
+    architect_system_prompt: str = ""
+    architect_user_prompt: str = ""
+    critic_system_prompt: str = ""
+    critic_user_prompt: str = ""
+    adr_system_prompt: str = ""
+    adr_user_prompt: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -148,14 +156,14 @@ class DeepPlanWorkflow:
                 role="planner",
                 iteration=iteration,
                 run_dir=inp.run_dir,
-                prompt_content=_planner_user_prompt(
+                prompt_content=inp.planner_user_prompt or _planner_user_prompt(
                     task=inp.task,
                     mode=mode,
                     iteration=iteration,
                     previous_plan=current_plan,
                     feedback=feedback_lines,
                 ),
-                system_prompt=_planner_system_prompt(mode=mode),
+                system_prompt=inp.planner_system_prompt or _planner_system_prompt(mode=mode),
                 max_tokens=2048,
                 reg_spawn=_reg_spawn,
                 reg_unparseable=_reg_unparseable,
@@ -173,13 +181,13 @@ class DeepPlanWorkflow:
                 role="architect",
                 iteration=iteration,
                 run_dir=inp.run_dir,
-                prompt_content=_architect_user_prompt(
+                prompt_content=inp.architect_user_prompt or _architect_user_prompt(
                     task=inp.task,
                     plan=current_plan,
                     criteria=current_criteria,
                     mode=mode,
                 ),
-                system_prompt=_architect_system_prompt(mode=mode),
+                system_prompt=inp.architect_system_prompt or _architect_system_prompt(mode=mode),
                 max_tokens=1024,
                 reg_spawn=_reg_spawn,
                 reg_unparseable=_reg_unparseable,
@@ -216,7 +224,7 @@ class DeepPlanWorkflow:
                 role="critic",
                 iteration=iteration,
                 run_dir=inp.run_dir,
-                prompt_content=_critic_user_prompt(
+                prompt_content=inp.critic_user_prompt or _critic_user_prompt(
                     task=inp.task,
                     plan=current_plan,
                     criteria=current_criteria,
@@ -224,7 +232,7 @@ class DeepPlanWorkflow:
                     architect_concerns=architect_concerns,
                     mode=mode,
                 ),
-                system_prompt=_critic_system_prompt(mode=mode),
+                system_prompt=inp.critic_system_prompt or _critic_system_prompt(mode=mode),
                 max_tokens=1024,
                 reg_spawn=_reg_spawn,
                 reg_unparseable=_reg_unparseable,
@@ -319,7 +327,7 @@ class DeepPlanWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=adr_prompt_path,
-                content=_adr_user_prompt(
+                content=inp.adr_user_prompt or _adr_user_prompt(
                     task=inp.task,
                     plan=current_plan,
                     criteria=current_criteria,
@@ -337,7 +345,7 @@ class DeepPlanWorkflow:
             iteration=0,
             run_dir=inp.run_dir,
             prompt_content=None,  # already written above; use a sentinel
-            system_prompt=_adr_system_prompt(),
+            system_prompt=inp.adr_system_prompt or _adr_system_prompt(),
             max_tokens=2048,
             reg_spawn=_reg_spawn,
             reg_unparseable=_reg_unparseable,

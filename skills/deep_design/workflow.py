@@ -49,6 +49,31 @@ class DeepDesignInput:
     run_dir: str
     max_rounds: int = 2
     notify: bool = True
+    # Prompts loaded from ~/.claude/skills/deep-design/prompts/ at build_input time.
+    # Empty string means "use inline default".
+    draft_system_prompt: str = ""
+    draft_user_prompt: str = ""
+    fact_sheet_system_prompt: str = ""
+    fact_sheet_user_prompt: str = ""
+    critic_system_prompt: str = ""
+    critic_user_prompt: str = ""
+    outside_frame_system_prompt: str = ""
+    outside_frame_user_prompt: str = ""
+    judge_system_prompt: str = ""
+    judge_pass1_user_prompt: str = ""
+    judge_pass2_user_prompt: str = ""
+    challenger_system_prompt: str = ""
+    challenger_user_prompt: str = ""
+    cross_fix_system_prompt: str = ""
+    cross_fix_user_prompt: str = ""
+    redesign_system_prompt: str = ""
+    redesign_user_prompt: str = ""
+    invariant_validator_system_prompt: str = ""
+    invariant_validator_user_prompt: str = ""
+    drift_judge_system_prompt: str = ""
+    drift_judge_user_prompt: str = ""
+    synth_system_prompt: str = ""
+    synth_user_prompt: str = ""
 
 
 # Max spec-derived critics per round (outside-frame is slot #7, tracked separately).
@@ -77,7 +102,7 @@ class DeepDesignWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=draft_prompt_path,
-                content=_draft_user_prompt(concept=inp.concept),
+                content=inp.draft_user_prompt or _draft_user_prompt(concept=inp.concept),
             ),
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=HAIKU_POLICY,
@@ -87,7 +112,7 @@ class DeepDesignWorkflow:
             SpawnSubagentInput(
                 role="draft",
                 tier_name="SONNET",
-                system_prompt=_draft_system_prompt(),
+                system_prompt=inp.draft_system_prompt or _draft_system_prompt(),
                 user_prompt_path=draft_prompt_path,
                 max_tokens=4096,
                 tools_needed=False,
@@ -111,7 +136,7 @@ class DeepDesignWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=fact_sheet_prompt_path,
-                    content=_fact_sheet_user_prompt(spec_md=state.spec_draft),
+                    content=inp.fact_sheet_user_prompt or _fact_sheet_user_prompt(spec_md=state.spec_draft),
                 ),
                 start_to_close_timeout=timedelta(seconds=10),
                 retry_policy=HAIKU_POLICY,
@@ -121,7 +146,7 @@ class DeepDesignWorkflow:
                 SpawnSubagentInput(
                     role="fact-sheet",
                     tier_name="HAIKU",
-                    system_prompt=_fact_sheet_system_prompt(),
+                    system_prompt=inp.fact_sheet_system_prompt or _fact_sheet_system_prompt(),
                     user_prompt_path=fact_sheet_prompt_path,
                     max_tokens=512,
                     tools_needed=False,
@@ -144,7 +169,7 @@ class DeepDesignWorkflow:
                     "write_artifact",
                     WriteArtifactInput(
                         path=ppath,
-                        content=_critic_user_prompt(
+                        content=inp.critic_user_prompt or _critic_user_prompt(
                             spec_md=state.spec_draft,
                             concept=inp.concept,
                             critic_index=i,
@@ -161,7 +186,7 @@ class DeepDesignWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=of_prompt_path,
-                    content=_outside_frame_user_prompt(concept=inp.concept),
+                    content=inp.outside_frame_user_prompt or _outside_frame_user_prompt(concept=inp.concept),
                 ),
                 start_to_close_timeout=timedelta(seconds=10),
                 retry_policy=HAIKU_POLICY,
@@ -174,7 +199,7 @@ class DeepDesignWorkflow:
                     SpawnSubagentInput(
                         role="critic",
                         tier_name="HAIKU",
-                        system_prompt=_critic_system_prompt(),
+                        system_prompt=inp.critic_system_prompt or _critic_system_prompt(),
                         user_prompt_path=ppath,
                         max_tokens=1024,
                         tools_needed=False,
@@ -189,7 +214,7 @@ class DeepDesignWorkflow:
                 SpawnSubagentInput(
                     role="outside-frame",
                     tier_name="HAIKU",
-                    system_prompt=_outside_frame_system_prompt(),
+                    system_prompt=inp.outside_frame_system_prompt or _outside_frame_system_prompt(),
                     user_prompt_path=of_prompt_path,
                     max_tokens=1024,
                     tools_needed=False,
@@ -288,7 +313,7 @@ class DeepDesignWorkflow:
                     "write_artifact",
                     WriteArtifactInput(
                         path=judge_prompt_path,
-                        content=_judge_pass1_user_prompt(
+                        content=inp.judge_pass1_user_prompt or _judge_pass1_user_prompt(
                             flaw=flaw, spec_md=state.spec_draft
                         ),
                     ),
@@ -300,7 +325,7 @@ class DeepDesignWorkflow:
                     SpawnSubagentInput(
                         role="judge-pass-1",
                         tier_name="HAIKU",
-                        system_prompt=_judge_system_prompt(),
+                        system_prompt=inp.judge_system_prompt or _judge_system_prompt(),
                         user_prompt_path=judge_prompt_path,
                         max_tokens=512,
                         tools_needed=False,
@@ -319,7 +344,7 @@ class DeepDesignWorkflow:
                     "write_artifact",
                     WriteArtifactInput(
                         path=judge_p2_prompt_path,
-                        content=_judge_pass2_user_prompt(
+                        content=inp.judge_pass2_user_prompt or _judge_pass2_user_prompt(
                             flaw=flaw,
                             pass1_verdict=p1_verdict or "minor",
                             original_severity=flaw.severity,
@@ -333,7 +358,7 @@ class DeepDesignWorkflow:
                     SpawnSubagentInput(
                         role="judge-pass-2",
                         tier_name="HAIKU",
-                        system_prompt=_judge_system_prompt(),
+                        system_prompt=inp.judge_system_prompt or _judge_system_prompt(),
                         user_prompt_path=judge_p2_prompt_path,
                         max_tokens=512,
                         tools_needed=False,
@@ -372,7 +397,7 @@ class DeepDesignWorkflow:
                     "write_artifact",
                     WriteArtifactInput(
                         path=challenger_prompt_path,
-                        content=_challenger_user_prompt(
+                        content=inp.challenger_user_prompt or _challenger_user_prompt(
                             flaw=flaw, spec_md=state.spec_draft
                         ),
                     ),
@@ -384,7 +409,7 @@ class DeepDesignWorkflow:
                     SpawnSubagentInput(
                         role="challenger",
                         tier_name="HAIKU",
-                        system_prompt=_challenger_system_prompt(),
+                        system_prompt=inp.challenger_system_prompt or _challenger_system_prompt(),
                         user_prompt_path=challenger_prompt_path,
                         max_tokens=512,
                         tools_needed=False,
@@ -413,7 +438,7 @@ class DeepDesignWorkflow:
                     "write_artifact",
                     WriteArtifactInput(
                         path=cross_fix_prompt_path,
-                        content=_cross_fix_user_prompt(
+                        content=inp.cross_fix_user_prompt or _cross_fix_user_prompt(
                             flaws=accepted_flaws, spec_md=state.spec_draft
                         ),
                     ),
@@ -425,7 +450,7 @@ class DeepDesignWorkflow:
                     SpawnSubagentInput(
                         role="cross-fix",
                         tier_name="HAIKU",
-                        system_prompt=_cross_fix_system_prompt(),
+                        system_prompt=inp.cross_fix_system_prompt or _cross_fix_system_prompt(),
                         user_prompt_path=cross_fix_prompt_path,
                         max_tokens=512,
                         tools_needed=False,
@@ -449,7 +474,7 @@ class DeepDesignWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=redesign_prompt_path,
-                    content=_redesign_user_prompt(
+                    content=inp.redesign_user_prompt or _redesign_user_prompt(
                         spec_md=state.spec_draft,
                         flaws=accepted_flaws,
                         invariants=state.component_invariants,
@@ -464,7 +489,7 @@ class DeepDesignWorkflow:
                 SpawnSubagentInput(
                     role="redesign",
                     tier_name="SONNET",
-                    system_prompt=_redesign_system_prompt(),
+                    system_prompt=inp.redesign_system_prompt or _redesign_system_prompt(),
                     user_prompt_path=redesign_prompt_path,
                     max_tokens=4096,
                     tools_needed=False,
@@ -498,7 +523,7 @@ class DeepDesignWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=inv_prompt_path,
-                    content=_invariant_validator_user_prompt(
+                    content=inp.invariant_validator_user_prompt or _invariant_validator_user_prompt(
                         spec_md=state.spec_draft,
                         invariants=state.component_invariants,
                     ),
@@ -511,7 +536,7 @@ class DeepDesignWorkflow:
                 SpawnSubagentInput(
                     role="invariant-validator",
                     tier_name="HAIKU",
-                    system_prompt=_invariant_validator_system_prompt(),
+                    system_prompt=inp.invariant_validator_system_prompt or _invariant_validator_system_prompt(),
                     user_prompt_path=inv_prompt_path,
                     max_tokens=512,
                     tools_needed=False,
@@ -535,7 +560,7 @@ class DeepDesignWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=drift_prompt_path,
-                    content=_drift_judge_user_prompt(
+                    content=inp.drift_judge_user_prompt or _drift_judge_user_prompt(
                         core_claim=state.core_claim,
                         spec_md=state.spec_draft,
                         calibrated=state.core_claim_calibrated,
@@ -549,7 +574,7 @@ class DeepDesignWorkflow:
                 SpawnSubagentInput(
                     role="drift-judge",
                     tier_name="HAIKU",
-                    system_prompt=_drift_judge_system_prompt(),
+                    system_prompt=inp.drift_judge_system_prompt or _drift_judge_system_prompt(),
                     user_prompt_path=drift_prompt_path,
                     max_tokens=256,
                     tools_needed=False,
@@ -593,7 +618,7 @@ class DeepDesignWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=synth_prompt_path,
-                content=_synth_user_prompt(
+                content=inp.synth_user_prompt or _synth_user_prompt(
                     concept=inp.concept,
                     spec_md=state.spec_draft,
                     flaws=[vars(f) for f in state.flaws],
@@ -608,7 +633,7 @@ class DeepDesignWorkflow:
             SpawnSubagentInput(
                 role="synth",
                 tier_name="SONNET",
-                system_prompt=_synth_system_prompt(),
+                system_prompt=inp.synth_system_prompt or _synth_system_prompt(),
                 user_prompt_path=synth_prompt_path,
                 max_tokens=4096,
                 tools_needed=False,

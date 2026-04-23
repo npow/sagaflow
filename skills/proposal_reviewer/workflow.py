@@ -58,6 +58,26 @@ class ProposalReviewInput:
     inbox_path: str
     run_dir: str
     notify: bool = True
+    # Prompt overrides — loaded from ~/.claude/skills/proposal-reviewer/prompts/.
+    # Empty string means "use inline default".
+    claim_extraction_system_prompt: str = ""
+    claim_extraction_user_prompt: str = ""
+    critic_system_prompt: str = ""
+    critic_user_prompt: str = ""
+    fact_check_system_prompt: str = ""
+    fact_check_user_prompt: str = ""
+    credibility_judge_system_prompt: str = ""
+    credibility_judge_pass1_prompt: str = ""
+    credibility_judge_pass2_prompt: str = ""
+    severity_judge_system_prompt: str = ""
+    severity_judge_pass1_prompt: str = ""
+    severity_judge_pass2_prompt: str = ""
+    landscape_judge_system_prompt: str = ""
+    landscape_judge_user_prompt: str = ""
+    audit_system_prompt: str = ""
+    audit_user_prompt: str = ""
+    assembly_system_prompt: str = ""
+    assembly_user_prompt: str = ""
 
 
 @workflow.defn(name="ProposalReviewWorkflow")
@@ -75,7 +95,7 @@ class ProposalReviewWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=claim_prompt_path,
-                content=_claim_extraction_user_prompt(inp.proposal_text),
+                content=inp.claim_extraction_user_prompt or _claim_extraction_user_prompt(inp.proposal_text),
             ),
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=HAIKU_POLICY,
@@ -85,7 +105,7 @@ class ProposalReviewWorkflow:
             SpawnSubagentInput(
                 role="claim-extractor",
                 tier_name="SONNET",
-                system_prompt=_claim_extraction_system_prompt(),
+                system_prompt=inp.claim_extraction_system_prompt or _claim_extraction_system_prompt(),
                 user_prompt_path=claim_prompt_path,
                 max_tokens=1024,
                 tools_needed=False,
@@ -106,7 +126,7 @@ class ProposalReviewWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=ppath,
-                    content=_critic_user_prompt(inp.proposal_text, dim),
+                    content=inp.critic_user_prompt or _critic_user_prompt(inp.proposal_text, dim),
                 ),
                 start_to_close_timeout=timedelta(seconds=10),
                 retry_policy=HAIKU_POLICY,
@@ -119,7 +139,7 @@ class ProposalReviewWorkflow:
                 SpawnSubagentInput(
                     role="critic",
                     tier_name="HAIKU",
-                    system_prompt=_critic_system_prompt(dim),
+                    system_prompt=inp.critic_system_prompt or _critic_system_prompt(dim),
                     user_prompt_path=ppath,
                     max_tokens=1024,
                     tools_needed=False,
@@ -191,7 +211,7 @@ class ProposalReviewWorkflow:
                     "write_artifact",
                     WriteArtifactInput(
                         path=ppath,
-                        content=_fact_check_user_prompt(claim),
+                        content=inp.fact_check_user_prompt or _fact_check_user_prompt(claim),
                     ),
                     start_to_close_timeout=timedelta(seconds=10),
                     retry_policy=HAIKU_POLICY,
@@ -204,7 +224,7 @@ class ProposalReviewWorkflow:
                     SpawnSubagentInput(
                         role="fact-check",
                         tier_name="HAIKU",
-                        system_prompt=_fact_check_system_prompt(),
+                        system_prompt=inp.fact_check_system_prompt or _fact_check_system_prompt(),
                         user_prompt_path=ppath,
                         max_tokens=512,
                         tools_needed=False,
@@ -256,7 +276,7 @@ class ProposalReviewWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=p1_path,
-                    content=_credibility_judge_pass1_prompt(claim_id, claim_text, evidence),
+                    content=inp.credibility_judge_pass1_prompt or _credibility_judge_pass1_prompt(claim_id, claim_text, evidence),
                 ),
                 start_to_close_timeout=timedelta(seconds=10),
                 retry_policy=HAIKU_POLICY,
@@ -266,7 +286,7 @@ class ProposalReviewWorkflow:
                 SpawnSubagentInput(
                     role="credibility-judge-1",
                     tier_name="HAIKU",
-                    system_prompt=_credibility_judge_system_prompt(),
+                    system_prompt=inp.credibility_judge_system_prompt or _credibility_judge_system_prompt(),
                     user_prompt_path=p1_path,
                     max_tokens=512,
                     tools_needed=False,
@@ -282,7 +302,7 @@ class ProposalReviewWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=p2_path,
-                    content=_credibility_judge_pass2_prompt(
+                    content=inp.credibility_judge_pass2_prompt or _credibility_judge_pass2_prompt(
                         claim_id, claim_text, evidence, pass1_verdict, proposed_verdict
                     ),
                 ),
@@ -294,7 +314,7 @@ class ProposalReviewWorkflow:
                 SpawnSubagentInput(
                     role="credibility-judge-2",
                     tier_name="HAIKU",
-                    system_prompt=_credibility_judge_system_prompt(),
+                    system_prompt=inp.credibility_judge_system_prompt or _credibility_judge_system_prompt(),
                     user_prompt_path=p2_path,
                     max_tokens=512,
                     tools_needed=False,
@@ -329,7 +349,7 @@ class ProposalReviewWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=s1_path,
-                    content=_severity_judge_pass1_prompt(weakness),
+                    content=inp.severity_judge_pass1_prompt or _severity_judge_pass1_prompt(weakness),
                 ),
                 start_to_close_timeout=timedelta(seconds=10),
                 retry_policy=HAIKU_POLICY,
@@ -339,7 +359,7 @@ class ProposalReviewWorkflow:
                 SpawnSubagentInput(
                     role="severity-judge-1",
                     tier_name="HAIKU",
-                    system_prompt=_severity_judge_system_prompt(),
+                    system_prompt=inp.severity_judge_system_prompt or _severity_judge_system_prompt(),
                     user_prompt_path=s1_path,
                     max_tokens=512,
                     tools_needed=False,
@@ -357,7 +377,7 @@ class ProposalReviewWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=s2_path,
-                    content=_severity_judge_pass2_prompt(
+                    content=inp.severity_judge_pass2_prompt or _severity_judge_pass2_prompt(
                         weakness, falsifiable_p1, severity_p1, critic_severity
                     ),
                 ),
@@ -369,7 +389,7 @@ class ProposalReviewWorkflow:
                 SpawnSubagentInput(
                     role="severity-judge-2",
                     tier_name="HAIKU",
-                    system_prompt=_severity_judge_system_prompt(),
+                    system_prompt=inp.severity_judge_system_prompt or _severity_judge_system_prompt(),
                     user_prompt_path=s2_path,
                     max_tokens=512,
                     tools_needed=False,
@@ -420,7 +440,7 @@ class ProposalReviewWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=landscape_prompt_path,
-                content=_landscape_judge_user_prompt(inp.proposal_text, critic_outputs),
+                content=inp.landscape_judge_user_prompt or _landscape_judge_user_prompt(inp.proposal_text, critic_outputs),
             ),
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=HAIKU_POLICY,
@@ -430,7 +450,7 @@ class ProposalReviewWorkflow:
             SpawnSubagentInput(
                 role="landscape-judge",
                 tier_name="SONNET",  # Opus-tier intent; SONNET used for test compat.
-                system_prompt=_landscape_judge_system_prompt(),
+                system_prompt=inp.landscape_judge_system_prompt or _landscape_judge_system_prompt(),
                 user_prompt_path=landscape_prompt_path,
                 max_tokens=512,
                 tools_needed=False,
@@ -472,7 +492,7 @@ class ProposalReviewWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=audit_prompt_path,
-                content=_audit_user_prompt(credibility_verdicts, severity_verdicts),
+                content=inp.audit_user_prompt or _audit_user_prompt(credibility_verdicts, severity_verdicts),
             ),
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=HAIKU_POLICY,
@@ -482,7 +502,7 @@ class ProposalReviewWorkflow:
             SpawnSubagentInput(
                 role="rationalization-auditor",
                 tier_name="SONNET",  # Opus-tier intent; SONNET for test compat.
-                system_prompt=_audit_system_prompt(),
+                system_prompt=inp.audit_system_prompt or _audit_system_prompt(),
                 user_prompt_path=audit_prompt_path,
                 max_tokens=1024,
                 tools_needed=False,
@@ -534,7 +554,7 @@ class ProposalReviewWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=synth_prompt_path,
-                content=_assembly_user_prompt(
+                content=inp.assembly_user_prompt or _assembly_user_prompt(
                     proposal_text=inp.proposal_text,
                     claims=claims,
                     weaknesses=all_weaknesses,
@@ -553,7 +573,7 @@ class ProposalReviewWorkflow:
             SpawnSubagentInput(
                 role="synth",
                 tier_name="SONNET",
-                system_prompt=_assembly_system_prompt(),
+                system_prompt=inp.assembly_system_prompt or _assembly_system_prompt(),
                 user_prompt_path=synth_prompt_path,
                 max_tokens=4096,
                 tools_needed=False,

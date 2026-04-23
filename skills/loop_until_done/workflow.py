@@ -34,6 +34,17 @@ class LoopUntilDoneInput:
     run_dir: str
     max_iter: int = 5
     notify: bool = True
+    # Prompts loaded from claude-skills at build_input time.
+    prd_system_prompt: str = ""
+    prd_user_prompt: str = ""
+    falsifiability_system_prompt: str = ""
+    falsifiability_user_prompt: str = ""
+    executor_system_prompt: str = ""
+    executor_user_prompt: str = ""
+    verifier_system_prompt: str = ""
+    verifier_user_prompt: str = ""
+    reviewer_system_prompt: str = ""
+    reviewer_user_prompt: str = ""
 
 
 @workflow.defn(name="LoopUntilDoneWorkflow")
@@ -46,7 +57,10 @@ class LoopUntilDoneWorkflow:
         # --- Phase 1: PRD planner ---
         await workflow.execute_activity(
             "write_artifact",
-            WriteArtifactInput(path=prd_prompt_path, content=_prd_user_prompt(inp.task)),
+            WriteArtifactInput(
+                path=prd_prompt_path,
+                content=inp.prd_user_prompt or _prd_user_prompt(inp.task),
+            ),
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=HAIKU_POLICY,
         )
@@ -55,7 +69,7 @@ class LoopUntilDoneWorkflow:
             SpawnSubagentInput(
                 role="prd",
                 tier_name="SONNET",
-                system_prompt=_prd_system_prompt(),
+                system_prompt=inp.prd_system_prompt or _prd_system_prompt(),
                 user_prompt_path=prd_prompt_path,
                 max_tokens=2048,
                 tools_needed=False,
@@ -90,7 +104,7 @@ class LoopUntilDoneWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=falsifiability_prompt_path,
-                content=_falsifiability_user_prompt(all_criteria),
+                content=inp.falsifiability_user_prompt or _falsifiability_user_prompt(all_criteria),
             ),
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=HAIKU_POLICY,
@@ -100,7 +114,7 @@ class LoopUntilDoneWorkflow:
             SpawnSubagentInput(
                 role="falsifiability",
                 tier_name="HAIKU",
-                system_prompt=_falsifiability_system_prompt(),
+                system_prompt=inp.falsifiability_system_prompt or _falsifiability_system_prompt(),
                 user_prompt_path=falsifiability_prompt_path,
                 max_tokens=1024,
                 tools_needed=False,
@@ -129,7 +143,7 @@ class LoopUntilDoneWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=executor_prompt_path,
-                    content=_executor_user_prompt(story, inp.task),
+                    content=inp.executor_user_prompt or _executor_user_prompt(story, inp.task),
                 ),
                 start_to_close_timeout=timedelta(seconds=10),
                 retry_policy=HAIKU_POLICY,
@@ -139,7 +153,7 @@ class LoopUntilDoneWorkflow:
                 SpawnSubagentInput(
                     role="executor",
                     tier_name="SONNET",
-                    system_prompt=_executor_system_prompt(),
+                    system_prompt=inp.executor_system_prompt or _executor_system_prompt(),
                     user_prompt_path=executor_prompt_path,
                     max_tokens=1024,
                     tools_needed=False,
@@ -172,7 +186,7 @@ class LoopUntilDoneWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=reviewer_prompt_path,
-                content=_reviewer_user_prompt(
+                content=inp.reviewer_user_prompt or _reviewer_user_prompt(
                     stories=stories,
                     falsifiable_criteria=falsifiable_criteria,
                     verify_results=verify_results,
@@ -187,7 +201,7 @@ class LoopUntilDoneWorkflow:
             SpawnSubagentInput(
                 role="reviewer",
                 tier_name="SONNET",
-                system_prompt=_reviewer_system_prompt(),
+                system_prompt=inp.reviewer_system_prompt or _reviewer_system_prompt(),
                 user_prompt_path=reviewer_prompt_path,
                 max_tokens=1024,
                 tools_needed=False,
@@ -215,7 +229,7 @@ async def _run_verifier(
         "write_artifact",
         WriteArtifactInput(
             path=verifier_prompt_path,
-            content=_verifier_user_prompt(crit, work_descriptions),
+            content=inp.verifier_user_prompt or _verifier_user_prompt(crit, work_descriptions),
         ),
         start_to_close_timeout=timedelta(seconds=10),
         retry_policy=HAIKU_POLICY,
@@ -225,7 +239,7 @@ async def _run_verifier(
         SpawnSubagentInput(
             role="verifier",
             tier_name="HAIKU",
-            system_prompt=_verifier_system_prompt(),
+            system_prompt=inp.verifier_system_prompt or _verifier_system_prompt(),
             user_prompt_path=verifier_prompt_path,
             max_tokens=512,
             tools_needed=False,

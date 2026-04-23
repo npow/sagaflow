@@ -56,6 +56,18 @@ class DeepQaInput:
     run_dir: str
     max_rounds: int = 3
     notify: bool = True
+    # Optional prompt overrides — loaded from ~/.claude/skills/deep-qa/prompts/*.md
+    # at build_input time. Empty string means "use inline default".
+    dim_discovery_system_prompt: str = ""
+    dim_discovery_user_prompt: str = ""
+    critic_system_prompt: str = ""
+    critic_user_prompt: str = ""
+    judge_pass1_system_prompt: str = ""
+    judge_pass2_system_prompt: str = ""
+    auditor_system_prompt: str = ""
+    verifier_system_prompt: str = ""
+    verifier_user_prompt: str = ""
+    synth_system_prompt: str = ""
 
 
 # Bounded parallelism per round (spec: max 6 critics per round).
@@ -96,7 +108,7 @@ class DeepQaWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=dim_prompt_path,
-                content=_dim_discovery_user_prompt(
+                content=inp.dim_discovery_user_prompt or _dim_discovery_user_prompt(
                     artifact_text=artifact_text, artifact_type=inp.artifact_type
                 ),
             ),
@@ -112,7 +124,7 @@ class DeepQaWorkflow:
             SpawnSubagentInput(
                 role="dim-discover",
                 tier_name="SONNET",
-                system_prompt=_dim_discovery_system_prompt(),
+                system_prompt=inp.dim_discovery_system_prompt or _dim_discovery_system_prompt(),
                 user_prompt_path=dim_prompt_path,
                 max_tokens=1024,
                 tools_needed=False,
@@ -174,7 +186,7 @@ class DeepQaWorkflow:
                     "write_artifact",
                     WriteArtifactInput(
                         path=ppath,
-                        content=_critic_user_prompt(
+                        content=inp.critic_user_prompt or _critic_user_prompt(
                             artifact_text=artifact_text,
                             angle=angle,
                             artifact_type=inp.artifact_type,
@@ -192,7 +204,7 @@ class DeepQaWorkflow:
                     SpawnSubagentInput(
                         role="critic",
                         tier_name="HAIKU",
-                        system_prompt=_critic_system_prompt(),
+                        system_prompt=inp.critic_system_prompt or _critic_system_prompt(),
                         user_prompt_path=ppath,
                         max_tokens=1024,
                         tools_needed=False,
@@ -284,7 +296,7 @@ class DeepQaWorkflow:
                             SpawnSubagentInput(
                                 role="judge-pass-1",
                                 tier_name="HAIKU",
-                                system_prompt=_judge_system_prompt(pass_num=1),
+                                system_prompt=inp.judge_pass1_system_prompt or _judge_system_prompt(pass_num=1),
                                 user_prompt_path=judge_input_path,
                                 max_tokens=1024,
                                 tools_needed=False,
@@ -346,7 +358,7 @@ class DeepQaWorkflow:
                                 SpawnSubagentInput(
                                     role="judge-pass-2",
                                     tier_name="HAIKU",
-                                    system_prompt=_judge_system_prompt(pass_num=2),
+                                    system_prompt=inp.judge_pass2_system_prompt or _judge_system_prompt(pass_num=2),
                                     user_prompt_path=p2_path,
                                     max_tokens=1024,
                                     tools_needed=False,
@@ -402,7 +414,7 @@ class DeepQaWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=verifier_prompt_path,
-                    content=_verifier_user_prompt(artifact_text=artifact_text),
+                    content=inp.verifier_user_prompt or _verifier_user_prompt(artifact_text=artifact_text),
                 ),
                 start_to_close_timeout=timedelta(seconds=10),
                 retry_policy=HAIKU_POLICY,
@@ -412,7 +424,7 @@ class DeepQaWorkflow:
                 SpawnSubagentInput(
                     role="verifier",
                     tier_name="HAIKU",
-                    system_prompt=_verifier_system_prompt(),
+                    system_prompt=inp.verifier_system_prompt or _verifier_system_prompt(),
                     user_prompt_path=verifier_prompt_path,
                     max_tokens=1024,
                     # tools_needed=True routes to claude_cli (WebFetch capable).
@@ -479,7 +491,7 @@ class DeepQaWorkflow:
                 SpawnSubagentInput(
                     role="auditor",
                     tier_name="SONNET",
-                    system_prompt=_auditor_system_prompt(),
+                    system_prompt=inp.auditor_system_prompt or _auditor_system_prompt(),
                     user_prompt_path=audit_input_path,
                     max_tokens=1024,
                     tools_needed=False,
@@ -545,7 +557,7 @@ class DeepQaWorkflow:
                 SpawnSubagentInput(
                     role="synth",
                     tier_name="SONNET",
-                    system_prompt=_synth_system_prompt(),
+                    system_prompt=inp.synth_system_prompt or _synth_system_prompt(),
                     user_prompt_path=synth_prompt_path,
                     max_tokens=4096,
                     tools_needed=False,

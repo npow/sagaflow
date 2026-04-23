@@ -36,6 +36,14 @@ class FlakyTestInput:
     run_command: str
     n_runs: int = 10
     notify: bool = True
+    # Prompts loaded from claude-skills at build_input time. Empty string means
+    # fall back to inline default.
+    hyp_system_prompt: str = ""
+    hyp_user_prompt: str = ""
+    judge_system_prompt: str = ""
+    judge_user_prompt: str = ""
+    synth_system_prompt: str = ""
+    synth_user_prompt: str = ""
 
 
 @workflow.defn(name="FlakyTestWorkflow")
@@ -130,7 +138,7 @@ class FlakyTestWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=hyp_prompt_path,
-                content=_hyp_user_prompt(inp.test_identifier, run_records, fail_rate),
+                content=inp.hyp_user_prompt or _hyp_user_prompt(inp.test_identifier, run_records, fail_rate),
             ),
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=HAIKU_POLICY,
@@ -140,7 +148,7 @@ class FlakyTestWorkflow:
             SpawnSubagentInput(
                 role="hypothesis-gen",
                 tier_name="SONNET",
-                system_prompt=_hyp_system_prompt(),
+                system_prompt=inp.hyp_system_prompt or _hyp_system_prompt(),
                 user_prompt_path=hyp_prompt_path,
                 max_tokens=2048,
                 tools_needed=False,
@@ -155,7 +163,7 @@ class FlakyTestWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=judge_prompt_path,
-                content=_judge_user_prompt(inp.test_identifier, hypotheses, fail_rate),
+                content=inp.judge_user_prompt or _judge_user_prompt(inp.test_identifier, hypotheses, fail_rate),
             ),
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=HAIKU_POLICY,
@@ -165,7 +173,7 @@ class FlakyTestWorkflow:
             SpawnSubagentInput(
                 role="judge",
                 tier_name="HAIKU",
-                system_prompt=_judge_system_prompt(),
+                system_prompt=inp.judge_system_prompt or _judge_system_prompt(),
                 user_prompt_path=judge_prompt_path,
                 max_tokens=1024,
                 tools_needed=False,
@@ -180,7 +188,7 @@ class FlakyTestWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=synth_prompt_path,
-                content=_synth_user_prompt(
+                content=inp.synth_user_prompt or _synth_user_prompt(
                     inp.test_identifier, hypotheses, rankings, run_records, fail_rate, inp.n_runs
                 ),
             ),
@@ -192,7 +200,7 @@ class FlakyTestWorkflow:
             SpawnSubagentInput(
                 role="synth",
                 tier_name="SONNET",
-                system_prompt=_synth_system_prompt(),
+                system_prompt=inp.synth_system_prompt or _synth_system_prompt(),
                 user_prompt_path=synth_prompt_path,
                 max_tokens=4096,
                 tools_needed=False,

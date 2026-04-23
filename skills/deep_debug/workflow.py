@@ -30,6 +30,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import timedelta
+from string import Template
 
 from temporalio import workflow
 
@@ -62,6 +63,22 @@ class DeepDebugInput:
     # tests that construct DeepDebugInput directly keep working via the default-None path.
     premortem_system_prompt: str = ""
     premortem_user_prompt: str = ""
+    hypothesis_system_prompt: str = ""
+    hypothesis_user_prompt: str = ""
+    outside_frame_system_prompt: str = ""
+    outside_frame_user_prompt: str = ""
+    judge_pass1_system_prompt: str = ""
+    judge_pass1_user_prompt: str = ""
+    judge_pass2_system_prompt: str = ""
+    judge_pass2_user_prompt: str = ""
+    rebuttal_system_prompt: str = ""
+    rebuttal_user_prompt: str = ""
+    probe_system_prompt: str = ""
+    probe_user_prompt: str = ""
+    fix_system_prompt: str = ""
+    fix_user_prompt: str = ""
+    architect_system_prompt: str = ""
+    architect_user_prompt: str = ""
     num_hypotheses: int = 4
     max_cycles: int = _DEFAULT_MAX_CYCLES
     hard_stop: int = _DEFAULT_HARD_STOP
@@ -123,24 +140,45 @@ class DeepDebugWorkflow:
             hyp_prompt_paths: list[str] = []
             for i in range(num_hyp):
                 p = f"{run_dir}/c{cycle}-hyp-prompt-{i}.txt"
-                await _write(
-                    run_dir, p,
-                    _hyp_user_prompt(inp.symptom, inp.reproduction_command, i, cycle, blind_spots)
-                )
+                if inp.hypothesis_user_prompt:
+                    angles = [
+                        "logic / boundary conditions",
+                        "concurrency / shared state",
+                        "environment / configuration",
+                        "resource / timing",
+                        "dependency / API contract",
+                        "architecture / abstraction mismatch",
+                    ]
+                    blind = "\n".join(f"- {s}" for s in blind_spots) if blind_spots else "none"
+                    user_prompt = _sub(
+                        inp.hypothesis_user_prompt,
+                        symptom=inp.symptom, repro=inp.reproduction_command,
+                        cycle=str(cycle), angle=angles[i % len(angles)],
+                        blind_spots=blind,
+                    )
+                else:
+                    user_prompt = _hyp_user_prompt(inp.symptom, inp.reproduction_command, i, cycle, blind_spots)
+                await _write(run_dir, p, user_prompt)
                 hyp_prompt_paths.append(p)
 
             # outside-frame agent (slot #7)
             of_prompt_path = f"{run_dir}/c{cycle}-outside-frame-prompt.txt"
-            await _write(run_dir, of_prompt_path, _outside_frame_user_prompt(inp.symptom))
+            of_user = (
+                _sub(inp.outside_frame_user_prompt, symptom=inp.symptom)
+                if inp.outside_frame_user_prompt
+                else _outside_frame_user_prompt(inp.symptom)
+            )
+            await _write(run_dir, of_prompt_path, of_user)
 
             # Spawn all hypothesis agents + outside-frame in parallel
+            hyp_sys = inp.hypothesis_system_prompt or _hyp_system_prompt()
             hyp_coros = [
                 workflow.execute_activity(
                     "spawn_subagent",
                     SpawnSubagentInput(
                         role="hypothesis",
                         tier_name="SONNET",
-                        system_prompt=_hyp_system_prompt(),
+                        system_prompt=hyp_sys,
                         user_prompt_path=p,
                         max_tokens=1024,
                         tools_needed=False,
@@ -150,12 +188,13 @@ class DeepDebugWorkflow:
                 )
                 for p in hyp_prompt_paths
             ]
+            of_sys = inp.outside_frame_system_prompt or _outside_frame_system_prompt()
             of_coro = workflow.execute_activity(
                 "spawn_subagent",
                 SpawnSubagentInput(
                     role="outside-frame",
                     tier_name="SONNET",
-                    system_prompt=_outside_frame_system_prompt(),
+                    system_prompt=of_sys,
                     user_prompt_path=of_prompt_path,
                     max_tokens=1024,
                     tools_needed=False,
@@ -210,16 +249,21 @@ class DeepDebugWorkflow:
                 confidence_claims = {h["id"]: h.get("confidence", "low") for h in batch}
 
                 p1_prompt = f"{run_dir}/c{cycle}-judge-p1-b{b_idx}.txt"
-                await _write(
-                    run_dir, p1_prompt,
-                    _judge_pass1_user_prompt(inp.symptom, stripped)
+                p1_user = (
+                    _sub(inp.judge_pass1_user_prompt,
+                         symptom=inp.symptom,
+                         hypotheses_json=json.dumps(stripped, indent=2))
+                    if inp.judge_pass1_user_prompt
+                    else _judge_pass1_user_prompt(inp.symptom, stripped)
                 )
+                await _write(run_dir, p1_prompt, p1_user)
+                p1_sys = inp.judge_pass1_system_prompt or _judge_pass1_system_prompt()
                 pass1_result = await workflow.execute_activity(
                     "spawn_subagent",
                     SpawnSubagentInput(
                         role="judge-pass-1",
                         tier_name="HAIKU",
-                        system_prompt=_judge_pass1_system_prompt(),
+                        system_prompt=p1_sys,
                         user_prompt_path=p1_prompt,
                         max_tokens=1024,
                         tools_needed=False,
@@ -231,16 +275,21 @@ class DeepDebugWorkflow:
 
                 # Pass 2: informed with confidence claims
                 p2_prompt = f"{run_dir}/c{cycle}-judge-p2-b{b_idx}.txt"
-                await _write(
-                    run_dir, p2_prompt,
-                    _judge_pass2_user_prompt(pass1_verdicts, confidence_claims)
+                p2_user = (
+                    _sub(inp.judge_pass2_user_prompt,
+                         pass1_verdicts_json=json.dumps(pass1_verdicts, indent=2),
+                         confidence_claims_json=json.dumps(confidence_claims, indent=2))
+                    if inp.judge_pass2_user_prompt
+                    else _judge_pass2_user_prompt(pass1_verdicts, confidence_claims)
                 )
+                await _write(run_dir, p2_prompt, p2_user)
+                p2_sys = inp.judge_pass2_system_prompt or _judge_pass2_system_prompt()
                 pass2_result = await workflow.execute_activity(
                     "spawn_subagent",
                     SpawnSubagentInput(
                         role="judge-pass-2",
                         tier_name="HAIKU",
-                        system_prompt=_judge_pass2_system_prompt(),
+                        system_prompt=p2_sys,
                         user_prompt_path=p2_prompt,
                         max_tokens=1024,
                         tools_needed=False,
@@ -260,16 +309,25 @@ class DeepDebugWorkflow:
                 leader_a = leaders[0]
                 leader_b = leaders[1]
                 rebuttal_prompt = f"{run_dir}/c{cycle}-rebuttal.txt"
-                await _write(
-                    run_dir, rebuttal_prompt,
-                    _rebuttal_user_prompt(leader_a, leader_b, inp.symptom, cycle_hypotheses)
-                )
+                if inp.rebuttal_user_prompt:
+                    leader_hyp_r = _hyp_by_id(cycle_hypotheses, leader_a.get("hyp_id", "")) or leader_a
+                    alt_hyp_r = _hyp_by_id(cycle_hypotheses, leader_b.get("hyp_id", "")) or leader_b
+                    reb_user = _sub(
+                        inp.rebuttal_user_prompt,
+                        symptom=inp.symptom,
+                        leader_json=json.dumps(leader_hyp_r, indent=2),
+                        alternative_json=json.dumps(alt_hyp_r, indent=2),
+                    )
+                else:
+                    reb_user = _rebuttal_user_prompt(leader_a, leader_b, inp.symptom, cycle_hypotheses)
+                await _write(run_dir, rebuttal_prompt, reb_user)
+                reb_sys = inp.rebuttal_system_prompt or _rebuttal_system_prompt()
                 rebuttal_result = await workflow.execute_activity(
                     "spawn_subagent",
                     SpawnSubagentInput(
                         role="rebuttal",
                         tier_name="SONNET",
-                        system_prompt=_rebuttal_system_prompt(),
+                        system_prompt=reb_sys,
                         user_prompt_path=rebuttal_prompt,
                         max_tokens=1024,
                         tools_needed=False,
@@ -306,7 +364,9 @@ class DeepDebugWorkflow:
                     rival_hyp = _hyp_by_id(cycle_hypotheses, plausibles[0]["hyp_id"])
                     promoted_hyp, probe_count = await _run_probes(
                         run_dir, cycle, inp.symptom,
-                        leader_hyp, rival_hyp, probe_count, _MAX_PROBES_PER_CYCLE
+                        leader_hyp, rival_hyp, probe_count, _MAX_PROBES_PER_CYCLE,
+                        probe_sys=inp.probe_system_prompt,
+                        probe_user_tpl=inp.probe_user_prompt,
                     )
             elif len(leaders) >= 2:
                 # Multiple leaders survive rebuttal — probe to discriminate
@@ -331,22 +391,29 @@ class DeepDebugWorkflow:
                         "Architectural escalation required — "
                         "3 fix attempts failed across distinct hypotheses"
                     )
-                    await _run_architect(run_dir, inp.symptom, all_hypotheses)
+                    await _run_architect(run_dir, inp.symptom, all_hypotheses,
+                                         arch_sys=inp.architect_system_prompt,
+                                         arch_user_tpl=inp.architect_user_prompt)
                     break
                 continue  # next cycle
 
             # ── Phase 5: fix + verify cycle ────────────────────────────────
             fix_path = f"{run_dir}/c{cycle}-fix-prompt.txt"
-            await _write(
-                run_dir, fix_path,
-                _fix_worker_user_prompt(inp.symptom, promoted_hyp, inp.reproduction_command)
+            fix_user = (
+                _sub(inp.fix_user_prompt,
+                     symptom=inp.symptom, repro=inp.reproduction_command,
+                     hypothesis_json=json.dumps(promoted_hyp, indent=2))
+                if inp.fix_user_prompt
+                else _fix_worker_user_prompt(inp.symptom, promoted_hyp, inp.reproduction_command)
             )
+            await _write(run_dir, fix_path, fix_user)
+            fix_sys = inp.fix_system_prompt or _fix_worker_system_prompt()
             fix_result = await workflow.execute_activity(
                 "spawn_subagent",
                 SpawnSubagentInput(
                     role="fix-worker",
                     tier_name="SONNET",
-                    system_prompt=_fix_worker_system_prompt(),
+                    system_prompt=fix_sys,
                     user_prompt_path=fix_path,
                     max_tokens=2048,
                     tools_needed=True,
@@ -423,6 +490,12 @@ class DeepDebugWorkflow:
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
+
+def _sub(template_str: str, **kwargs: str) -> str:
+    """Substitute $variables in a loaded prompt template. Safe for workflow use."""
+    return Template(template_str).safe_substitute(kwargs)
+
+
 async def _write(run_dir: str, path: str, content: str) -> None:
     await workflow.execute_activity(
         "write_artifact",
@@ -440,22 +513,30 @@ async def _run_probes(
     rival: dict[str, str] | None,
     probe_count: int,
     max_probes: int,
+    *,
+    probe_sys: str = "",
+    probe_user_tpl: str = "",
 ) -> tuple[dict[str, str] | None, int]:
     """Run discriminating probes between leader and rival. Returns (winner, new_probe_count)."""
     while probe_count < max_probes:
         if leader is None or rival is None:
             break
         probe_prompt = f"{run_dir}/c{cycle}-probe-{probe_count}.txt"
-        await _write(
-            run_dir, probe_prompt,
-            _probe_user_prompt(symptom, leader, rival)
+        probe_user = (
+            _sub(probe_user_tpl,
+                 symptom=symptom,
+                 leader_json=json.dumps(leader, indent=2),
+                 rival_json=json.dumps(rival, indent=2))
+            if probe_user_tpl
+            else _probe_user_prompt(symptom, leader, rival)
         )
+        await _write(run_dir, probe_prompt, probe_user)
         probe_result = await workflow.execute_activity(
             "spawn_subagent",
             SpawnSubagentInput(
                 role="probe",
                 tier_name="HAIKU",
-                system_prompt=_probe_system_prompt(),
+                system_prompt=probe_sys or _probe_system_prompt(),
                 user_prompt_path=probe_prompt,
                 max_tokens=1024,
                 tools_needed=True,
@@ -484,16 +565,26 @@ async def _run_architect(
     run_dir: str,
     symptom: str,
     hypotheses: list[dict[str, str]],
+    *,
+    arch_sys: str = "",
+    arch_user_tpl: str = "",
 ) -> None:
     """Phase 7: spawn Opus architect agent."""
     arch_prompt = f"{run_dir}/architect-prompt.txt"
-    await _write(run_dir, arch_prompt, _architect_user_prompt(symptom, hypotheses))
+    arch_user = (
+        _sub(arch_user_tpl,
+             symptom=symptom,
+             hypotheses_json=json.dumps(hypotheses, indent=2))
+        if arch_user_tpl
+        else _architect_user_prompt(symptom, hypotheses)
+    )
+    await _write(run_dir, arch_prompt, arch_user)
     await workflow.execute_activity(
         "spawn_subagent",
         SpawnSubagentInput(
             role="architect",
             tier_name="SONNET",   # OPUS maps to SONNET in test env; prod overrides tier name
-            system_prompt=_architect_system_prompt(),
+            system_prompt=arch_sys or _architect_system_prompt(),
             user_prompt_path=arch_prompt,
             max_tokens=2048,
             tools_needed=True,

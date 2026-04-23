@@ -5,9 +5,23 @@ from __future__ import annotations
 from typing import Any
 
 from sagaflow.durable.activities import emit_finding, spawn_subagent, write_artifact
+from sagaflow.prompts import (
+    PromptNotFoundError,
+    load_claude_skill_prompt,
+)
 from sagaflow.registry import SkillRegistry, SkillSpec
 
 from skills.deep_design.workflow import DeepDesignInput, DeepDesignWorkflow
+
+_SKILL = "deep-design"
+
+
+def _load_or_empty(skill: str, name: str, *, substitutions: dict[str, str] | None = None) -> str:
+    """Load a prompt from claude-skills, returning '' if the file hasn't been extracted yet."""
+    try:
+        return load_claude_skill_prompt(skill, name, substitutions=substitutions)
+    except PromptNotFoundError:
+        return ""
 
 
 def _build_input(
@@ -32,6 +46,33 @@ def _build_input(
         run_dir=run_dir,
         max_rounds=max_rounds,
         notify=True,
+        # System prompts (no runtime variables — safe to load as-is).
+        draft_system_prompt=_load_or_empty(_SKILL, "draft.system"),
+        fact_sheet_system_prompt=_load_or_empty(_SKILL, "fact_sheet.system"),
+        critic_system_prompt=_load_or_empty(_SKILL, "critic.system"),
+        outside_frame_system_prompt=_load_or_empty(_SKILL, "outside_frame.system"),
+        judge_system_prompt=_load_or_empty(_SKILL, "judge.system"),
+        challenger_system_prompt=_load_or_empty(_SKILL, "challenger.system"),
+        cross_fix_system_prompt=_load_or_empty(_SKILL, "cross_fix.system"),
+        redesign_system_prompt=_load_or_empty(_SKILL, "redesign.system"),
+        invariant_validator_system_prompt=_load_or_empty(_SKILL, "invariant_validator.system"),
+        drift_judge_system_prompt=_load_or_empty(_SKILL, "drift_judge.system"),
+        synth_system_prompt=_load_or_empty(_SKILL, "synth.system"),
+        # User prompts where ALL variables are available at build_input time.
+        draft_user_prompt=_load_or_empty(_SKILL, "draft.user", substitutions={"concept": concept}),
+        outside_frame_user_prompt=_load_or_empty(_SKILL, "outside_frame.user", substitutions={"concept": concept}),
+        # User prompts with runtime-only variables — left empty so workflow
+        # falls back to inline defaults that can format with runtime state.
+        fact_sheet_user_prompt="",
+        critic_user_prompt="",
+        judge_pass1_user_prompt="",
+        judge_pass2_user_prompt="",
+        challenger_user_prompt="",
+        cross_fix_user_prompt="",
+        redesign_user_prompt="",
+        invariant_validator_user_prompt="",
+        drift_judge_user_prompt="",
+        synth_user_prompt="",
     )
 
 
