@@ -98,26 +98,47 @@ async def _is_worker_reachable(client: Client) -> bool:
 
 
 async def ensure_worker_running(*, target: str = DEFAULT_TARGET) -> None:
-    """If no worker is polling the queue, fork `sagaflow worker run --detached-child`."""
+    """If no worker is polling the queue, fork `sagaflow worker run --detached-child`.
+
+    Uses a file lock so concurrent ``sagaflow launch`` invocations don't
+    race to spawn multiple workers. The first caller acquires the lock,
+    checks reachability, spawns if needed, and releases. Concurrent
+    callers block on the lock and re-check reachability after acquiring
+    (the first caller's worker is likely already polling by then).
+    """
+    import fcntl
 
     client = await connect(target=target)
     if await _is_worker_reachable(client):
         return
-    log_dir = Paths.from_env().worker_log_dir
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / f"worker-{os.getpid()}.log"
-    subprocess.Popen(
-        [sys.executable, "-m", "sagaflow.cli", "worker", "run", "--detached-child"],
-        stdout=log_file.open("ab"),
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
-    # Poll until reachable or timeout.
-    for _ in range(30):
-        await asyncio.sleep(0.5)
+
+    lock_path = Paths.from_env().root / ".worker-spawn.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_fd = lock_path.open("w")
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        # Re-check after acquiring lock — another process may have spawned
+        # the worker while we were waiting.
         if await _is_worker_reachable(client):
             return
-    raise RuntimeError("auto-spawned worker did not become ready within 15s")
+        log_dir = Paths.from_env().worker_log_dir
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / f"worker-{os.getpid()}.log"
+        subprocess.Popen(
+            [sys.executable, "-m", "sagaflow.cli", "worker", "run", "--detached-child"],
+            stdout=log_file.open("ab"),
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        # Poll until reachable or timeout.
+        for _ in range(30):
+            await asyncio.sleep(0.5)
+            if await _is_worker_reachable(client):
+                return
+        raise RuntimeError("auto-spawned worker did not become ready within 15s")
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
 
 
 async def run_worker(*, target: str = DEFAULT_TARGET) -> None:
