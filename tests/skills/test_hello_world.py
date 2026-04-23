@@ -42,6 +42,8 @@ async def test_hello_world_round_trips(tmp_path) -> None:
                     name="alice",
                     inbox_path=str(tmp_path / "INBOX.md"),
                     run_dir=str(tmp_path / "runs" / "hw-1"),
+                    greeter_system_prompt="You are a greeter.",
+                    greeter_user_prompt="Greet alice",
                 ),
                 id="hw-1",
                 task_queue=TASK_QUEUE,

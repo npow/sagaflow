@@ -52,6 +52,46 @@ def test_all_activities_returns_union() -> None:
     assert set(registry.all_activities()) == {a1, a2}
 
 
+def test_all_activities_dedupes_shared_activity_fn() -> None:
+    # Shared activity registered by two skills must surface once, else Temporal's
+    # Worker() constructor raises "More than one activity named ..." at spawn.
+    registry = SkillRegistry()
+
+    def shared(inp):  # pragma: no cover
+        return None
+
+    registry.register(
+        SkillSpec(name="s1", workflow_cls=fake_workflow_cls(), activities=[shared])
+    )
+    registry.register(
+        SkillSpec(name="s2", workflow_cls=fake_workflow_cls(), activities=[shared])
+    )
+    out = registry.all_activities()
+    assert out.count(shared) == 1
+
+
+def test_all_activities_dedupes_by_temporal_activity_name() -> None:
+    from temporalio import activity
+
+    @activity.defn(name="named_shared")
+    async def fn_a(_inp):  # pragma: no cover
+        return None
+
+    @activity.defn(name="named_shared")
+    async def fn_b(_inp):  # pragma: no cover
+        return None
+
+    registry = SkillRegistry()
+    registry.register(
+        SkillSpec(name="s1", workflow_cls=fake_workflow_cls(), activities=[fn_a])
+    )
+    registry.register(
+        SkillSpec(name="s2", workflow_cls=fake_workflow_cls(), activities=[fn_b])
+    )
+    out = registry.all_activities()
+    assert len(out) == 1
+
+
 def test_all_workflows_returns_union() -> None:
     registry = SkillRegistry()
     w1 = fake_workflow_cls()

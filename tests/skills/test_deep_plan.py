@@ -175,7 +175,11 @@ async def test_happy_path_consensus(tmp_path) -> None:
 
     plan_path = tmp_path / "run" / "plan.md"
     assert plan_path.exists(), "plan.md was not written"
-    assert "Plan" in plan_path.read_text()
+    plan_text = plan_path.read_text()
+    assert "Plan" in plan_text
+    # plan.md must contain the planner's full output, not just a title stub
+    assert "Step 1" in plan_text, "plan.md is missing the planner body content"
+    assert "Step 2" in plan_text, "plan.md is missing the planner body content"
 
     adr_path = tmp_path / "run" / "adr.md"
     assert adr_path.exists(), "adr.md was not written"
@@ -235,6 +239,12 @@ async def test_rubber_stamp_filter_promotes_to_approved(tmp_path) -> None:
     assert dropped, "dropped-rejections file not written"
     dropped_text = dropped[0].read_text()
     assert "rubber-stamp" in dropped_text or "vague" in dropped_text
+
+    # plan.md must contain the planner's full body, not just a title
+    plan_path = tmp_path / "run" / "plan.md"
+    assert plan_path.exists(), "plan.md was not written on rubber-stamp path"
+    plan_text = plan_path.read_text()
+    assert "Step 1" in plan_text, "plan.md is missing planner body on rubber-stamp path"
 
     # ADR must still be written
     adr_path = tmp_path / "run" / "adr.md"

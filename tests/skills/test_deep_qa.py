@@ -449,3 +449,111 @@ async def test_coverage_enforcement_adds_critical_angles(tmp_path) -> None:
     )
     assert (tmp_path / "run" / "qa-report.md").exists()
     assert "defects across" in result
+
+
+# ---------------------------------------------------------------------------
+# Test 7: qa-report.md gets real synth content — not a 1-line stub
+# ---------------------------------------------------------------------------
+
+
+async def test_report_has_real_content_from_synth(tmp_path) -> None:
+    """qa-report.md must contain the full synth output, not just a header."""
+    artifact = tmp_path / "artifact.txt"
+    artifact.write_text("Hello world.\nThis is the artifact under QA.\n")
+
+    result = await _run_workflow(
+        tmp_path,
+        _fake_basic,
+        DeepQaInput(
+            run_id="dq-real-content",
+            artifact_path=str(artifact),
+            artifact_type="doc",
+            inbox_path=str(tmp_path / "INBOX.md"),
+            run_dir=str(tmp_path / "run"),
+            max_rounds=1,
+            notify=False,
+        ),
+    )
+
+    report = (tmp_path / "run" / "qa-report.md").read_text()
+    # Must have more than just "# QA Report" — the synth fake returns a body.
+    assert len(report.strip()) > len("# QA Report"), (
+        f"qa-report.md is a stub ({len(report)} bytes): {report!r}"
+    )
+    assert "1 major defect" in report
+
+
+# ---------------------------------------------------------------------------
+# Test 8: malformed synth falls back to audited draft report
+# ---------------------------------------------------------------------------
+
+
+@activity.defn(name="spawn_subagent")
+async def _fake_malformed_synth(inp: SpawnSubagentInput) -> dict[str, str]:
+    role = inp.role
+    if role == "dim-discover":
+        return {
+            "ANGLES": json.dumps([
+                {"id": "a1", "dimension": "correctness", "question": "Does it handle empty input?"},
+            ])
+        }
+    if role == "critic":
+        return {
+            "DEFECTS": json.dumps([
+                {
+                    "id": "d1",
+                    "title": "Empty-input crash",
+                    "severity": "major",
+                    "dimension": "correctness",
+                    "scenario": "Called with no arguments.",
+                    "root_cause": "No input guard.",
+                }
+            ])
+        }
+    if role in ("judge-pass-1", "judge-pass-2"):
+        return {
+            "VERDICTS": json.dumps([
+                {
+                    "defect_id": "d1",
+                    "severity": "major",
+                    "confidence": "high",
+                    "calibration": "confirm",
+                    "rationale": "Scenario is concrete.",
+                }
+            ])
+        }
+    if role == "auditor":
+        return {"REPORT_FIDELITY": "clean", "RATIONALE": "All defects carried."}
+    if role == "synth":
+        # Malformed: return sentinel with no REPORT key.
+        return {"_sagaflow_malformed": "1", "_error": "no block", "_raw": ""}
+    return {}
+
+
+async def test_malformed_synth_falls_back_to_draft(tmp_path) -> None:
+    """When synth returns malformed output, qa-report.md gets the audited draft."""
+    artifact = tmp_path / "artifact.txt"
+    artifact.write_text("def foo(): pass\n")
+
+    result = await _run_workflow(
+        tmp_path,
+        _fake_malformed_synth,
+        DeepQaInput(
+            run_id="dq-malformed-synth",
+            artifact_path=str(artifact),
+            artifact_type="code",
+            inbox_path=str(tmp_path / "INBOX.md"),
+            run_dir=str(tmp_path / "run"),
+            max_rounds=1,
+            notify=False,
+        ),
+    )
+
+    report = (tmp_path / "run" / "qa-report.md").read_text()
+    # Must have real content from the draft — not empty, not just a header.
+    assert len(report.strip()) > len("# QA Report"), (
+        f"qa-report.md is a stub ({len(report)} bytes): {report!r}"
+    )
+    # Draft report includes structured defect info.
+    assert "Empty-input crash" in report
+    assert "correctness" in report.lower()

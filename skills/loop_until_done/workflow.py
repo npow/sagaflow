@@ -60,8 +60,7 @@ class LoopUntilDoneWorkflow:
                 max_tokens=2048,
                 tools_needed=False,
             ),
-            start_to_close_timeout=timedelta(seconds=180),
-            heartbeat_timeout=timedelta(seconds=60),
+            start_to_close_timeout=timedelta(seconds=600),
             retry_policy=SONNET_POLICY,
         )
         stories_raw = prd_result.get("STORIES", "[]")
@@ -106,8 +105,7 @@ class LoopUntilDoneWorkflow:
                 max_tokens=1024,
                 tools_needed=False,
             ),
-            start_to_close_timeout=timedelta(seconds=180),
-            heartbeat_timeout=timedelta(seconds=60),
+            start_to_close_timeout=timedelta(seconds=600),
             retry_policy=HAIKU_POLICY,
         )
         verdicts_raw = falsifiability_result.get("CRITERION_VERDICTS", "[]")
@@ -146,8 +144,7 @@ class LoopUntilDoneWorkflow:
                     max_tokens=1024,
                     tools_needed=False,
                 ),
-                start_to_close_timeout=timedelta(seconds=180),
-                heartbeat_timeout=timedelta(seconds=60),
+                start_to_close_timeout=timedelta(seconds=600),
                 retry_policy=SONNET_POLICY,
             )
             work_descriptions[story_id] = executor_result.get("WORK_DESCRIPTION", "")
@@ -195,8 +192,7 @@ class LoopUntilDoneWorkflow:
                 max_tokens=1024,
                 tools_needed=False,
             ),
-            start_to_close_timeout=timedelta(seconds=240),
-            heartbeat_timeout=timedelta(seconds=60),
+            start_to_close_timeout=timedelta(seconds=600),
             retry_policy=SONNET_POLICY,
         )
         verdict = reviewer_result.get(
@@ -234,8 +230,7 @@ async def _run_verifier(
             max_tokens=512,
             tools_needed=False,
         ),
-        start_to_close_timeout=timedelta(seconds=180),
-        heartbeat_timeout=timedelta(seconds=60),
+        start_to_close_timeout=timedelta(seconds=600),
         retry_policy=HAIKU_POLICY,
     )
     verified_raw = result.get("VERIFIED", "false")

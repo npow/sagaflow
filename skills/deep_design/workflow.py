@@ -92,8 +92,7 @@ class DeepDesignWorkflow:
                 max_tokens=4096,
                 tools_needed=False,
             ),
-            start_to_close_timeout=timedelta(seconds=240),
-            heartbeat_timeout=timedelta(seconds=60),
+            start_to_close_timeout=timedelta(seconds=600),
             retry_policy=SONNET_POLICY,
         )
         state.spec_draft = draft_result.get("SPEC", _fallback_spec(inp.concept))
@@ -127,8 +126,7 @@ class DeepDesignWorkflow:
                     max_tokens=512,
                     tools_needed=False,
                 ),
-                start_to_close_timeout=timedelta(seconds=120),
-                heartbeat_timeout=timedelta(seconds=30),
+                start_to_close_timeout=timedelta(seconds=600),
                 retry_policy=HAIKU_POLICY,
             )
             state.recovery_behaviors = _parse_recovery_behaviors(
@@ -181,8 +179,7 @@ class DeepDesignWorkflow:
                         max_tokens=1024,
                         tools_needed=False,
                     ),
-                    start_to_close_timeout=timedelta(seconds=180),
-                    heartbeat_timeout=timedelta(seconds=60),
+                    start_to_close_timeout=timedelta(seconds=600),
                     retry_policy=HAIKU_POLICY,
                 )
                 for ppath in critic_prompt_paths
@@ -197,8 +194,7 @@ class DeepDesignWorkflow:
                     max_tokens=1024,
                     tools_needed=False,
                 ),
-                start_to_close_timeout=timedelta(seconds=180),
-                heartbeat_timeout=timedelta(seconds=60),
+                start_to_close_timeout=timedelta(seconds=600),
                 retry_policy=HAIKU_POLICY,
             )
 
@@ -309,8 +305,7 @@ class DeepDesignWorkflow:
                         max_tokens=512,
                         tools_needed=False,
                     ),
-                    start_to_close_timeout=timedelta(seconds=120),
-                    heartbeat_timeout=timedelta(seconds=30),
+                    start_to_close_timeout=timedelta(seconds=600),
                     retry_policy=HAIKU_POLICY,
                 )
                 p1_verdict = _parse_verdict(judge_p1_result.get("VERDICT", ""))
@@ -343,8 +338,7 @@ class DeepDesignWorkflow:
                         max_tokens=512,
                         tools_needed=False,
                     ),
-                    start_to_close_timeout=timedelta(seconds=120),
-                    heartbeat_timeout=timedelta(seconds=30),
+                    start_to_close_timeout=timedelta(seconds=600),
                     retry_policy=HAIKU_POLICY,
                 )
                 p2_verdict = _parse_verdict(judge_p2_result.get("VERDICT", ""))
@@ -395,8 +389,7 @@ class DeepDesignWorkflow:
                         max_tokens=512,
                         tools_needed=False,
                     ),
-                    start_to_close_timeout=timedelta(seconds=120),
-                    heartbeat_timeout=timedelta(seconds=30),
+                    start_to_close_timeout=timedelta(seconds=600),
                     retry_policy=HAIKU_POLICY,
                 )
                 challenge_outcome = challenger_result.get("CHALLENGE", "")
@@ -437,8 +430,7 @@ class DeepDesignWorkflow:
                         max_tokens=512,
                         tools_needed=False,
                     ),
-                    start_to_close_timeout=timedelta(seconds=120),
-                    heartbeat_timeout=timedelta(seconds=30),
+                    start_to_close_timeout=timedelta(seconds=600),
                     retry_policy=HAIKU_POLICY,
                 )
                 state.cross_fix_conflicts = _parse_cross_fix_conflicts(
@@ -477,8 +469,7 @@ class DeepDesignWorkflow:
                     max_tokens=4096,
                     tools_needed=False,
                 ),
-                start_to_close_timeout=timedelta(seconds=240),
-                heartbeat_timeout=timedelta(seconds=60),
+                start_to_close_timeout=timedelta(seconds=600),
                 retry_policy=SONNET_POLICY,
             )
             new_spec = redesign_result.get("SPEC", state.spec_draft)
@@ -525,8 +516,7 @@ class DeepDesignWorkflow:
                     max_tokens=512,
                     tools_needed=False,
                 ),
-                start_to_close_timeout=timedelta(seconds=120),
-                heartbeat_timeout=timedelta(seconds=30),
+                start_to_close_timeout=timedelta(seconds=600),
                 retry_policy=HAIKU_POLICY,
             )
             state.invariant_violations = _parse_invariant_violations(
@@ -564,8 +554,7 @@ class DeepDesignWorkflow:
                     max_tokens=256,
                     tools_needed=False,
                 ),
-                start_to_close_timeout=timedelta(seconds=120),
-                heartbeat_timeout=timedelta(seconds=30),
+                start_to_close_timeout=timedelta(seconds=600),
                 retry_policy=HAIKU_POLICY,
             )
             drift_score_raw = drift_result.get("DRIFT_SCORE", "")
@@ -624,8 +613,7 @@ class DeepDesignWorkflow:
                 max_tokens=4096,
                 tools_needed=False,
             ),
-            start_to_close_timeout=timedelta(seconds=240),
-            heartbeat_timeout=timedelta(seconds=60),
+            start_to_close_timeout=timedelta(seconds=600),
             retry_policy=SONNET_POLICY,
         )
         final_spec = synth_result.get("REPORT", state.spec_draft)

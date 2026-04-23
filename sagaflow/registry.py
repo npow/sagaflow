@@ -46,8 +46,15 @@ class SkillRegistry:
 
     def all_activities(self) -> list[Callable[..., Any]]:
         out: list[Callable[..., Any]] = []
+        seen: set[str] = set()
         for spec in self._specs.values():
-            out.extend(spec.activities)
+            for act in spec.activities:
+                defn = getattr(act, "__temporal_activity_definition", None)
+                key = defn.name if defn is not None else f"fn:{id(act)}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(act)
         return out
 
     def all_workflows(self) -> list[Any]:

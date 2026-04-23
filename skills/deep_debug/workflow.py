@@ -57,6 +57,11 @@ class DeepDebugInput:
     reproduction_command: str
     inbox_path: str
     run_dir: str
+    # Prompts loaded from the claude-skills repo at build_input time -- single source of
+    # truth for both the Claude Code driver and this workflow. Keep optional so legacy
+    # tests that construct DeepDebugInput directly keep working via the default-None path.
+    premortem_system_prompt: str = ""
+    premortem_user_prompt: str = ""
     num_hypotheses: int = 4
     max_cycles: int = _DEFAULT_MAX_CYCLES
     hard_stop: int = _DEFAULT_HARD_STOP
@@ -78,19 +83,20 @@ class DeepDebugWorkflow:
 
         # Phase 0e: premortem agent (Haiku, no tools)
         premortem_prompt_path = f"{run_dir}/premortem-prompt.txt"
-        await _write(run_dir, premortem_prompt_path, _premortem_user_prompt(inp.symptom))
+        premortem_user = inp.premortem_user_prompt or _premortem_user_prompt(inp.symptom)
+        premortem_system = inp.premortem_system_prompt or _premortem_system_prompt()
+        await _write(run_dir, premortem_prompt_path, premortem_user)
         premortem_result = await workflow.execute_activity(
             "spawn_subagent",
             SpawnSubagentInput(
                 role="premortem",
                 tier_name="HAIKU",
-                system_prompt=_premortem_system_prompt(),
+                system_prompt=premortem_system,
                 user_prompt_path=premortem_prompt_path,
                 max_tokens=1024,
                 tools_needed=False,
             ),
-            start_to_close_timeout=timedelta(seconds=120),
-            heartbeat_timeout=timedelta(seconds=60),
+            start_to_close_timeout=timedelta(seconds=600),
             retry_policy=HAIKU_POLICY,
         )
         blind_spots: list[str] = _parse_json_list_str(premortem_result.get("BLIND_SPOTS", "[]"))
@@ -139,8 +145,7 @@ class DeepDebugWorkflow:
                         max_tokens=1024,
                         tools_needed=False,
                     ),
-                    start_to_close_timeout=timedelta(seconds=180),
-                    heartbeat_timeout=timedelta(seconds=60),
+                    start_to_close_timeout=timedelta(seconds=600),
                     retry_policy=SONNET_POLICY,
                 )
                 for p in hyp_prompt_paths
@@ -155,8 +160,7 @@ class DeepDebugWorkflow:
                     max_tokens=1024,
                     tools_needed=False,
                 ),
-                start_to_close_timeout=timedelta(seconds=180),
-                heartbeat_timeout=timedelta(seconds=60),
+                start_to_close_timeout=timedelta(seconds=600),
                 retry_policy=SONNET_POLICY,
             )
 
@@ -220,8 +224,7 @@ class DeepDebugWorkflow:
                         max_tokens=1024,
                         tools_needed=False,
                     ),
-                    start_to_close_timeout=timedelta(seconds=120),
-                    heartbeat_timeout=timedelta(seconds=60),
+                    start_to_close_timeout=timedelta(seconds=600),
                     retry_policy=HAIKU_POLICY,
                 )
                 pass1_verdicts = _parse_judge_verdicts(pass1_result.get("VERDICTS", "[]"))
@@ -242,8 +245,7 @@ class DeepDebugWorkflow:
                         max_tokens=1024,
                         tools_needed=False,
                     ),
-                    start_to_close_timeout=timedelta(seconds=120),
-                    heartbeat_timeout=timedelta(seconds=60),
+                    start_to_close_timeout=timedelta(seconds=600),
                     retry_policy=HAIKU_POLICY,
                 )
                 pass2_verdicts = _parse_judge_verdicts(pass2_result.get("VERDICTS", "[]"))
@@ -272,8 +274,7 @@ class DeepDebugWorkflow:
                         max_tokens=1024,
                         tools_needed=False,
                     ),
-                    start_to_close_timeout=timedelta(seconds=180),
-                    heartbeat_timeout=timedelta(seconds=60),
+                    start_to_close_timeout=timedelta(seconds=600),
                     retry_policy=SONNET_POLICY,
                 )
                 outcome = rebuttal_result.get("OUTCOME", "INCONCLUSIVE")
@@ -351,7 +352,6 @@ class DeepDebugWorkflow:
                     tools_needed=True,
                 ),
                 start_to_close_timeout=timedelta(seconds=300),
-                heartbeat_timeout=timedelta(seconds=60),
                 retry_policy=SONNET_POLICY,
             )
 
@@ -461,7 +461,6 @@ async def _run_probes(
                 tools_needed=True,
             ),
             start_to_close_timeout=timedelta(seconds=300),
-            heartbeat_timeout=timedelta(seconds=60),
             retry_policy=HAIKU_POLICY,
         )
         probe_count += 1
@@ -500,7 +499,6 @@ async def _run_architect(
             tools_needed=True,
         ),
         start_to_close_timeout=timedelta(seconds=300),
-        heartbeat_timeout=timedelta(seconds=60),
         retry_policy=SONNET_POLICY,
     )
 

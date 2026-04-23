@@ -426,8 +426,7 @@ async def _spawn_with_retry(
                     max_tokens=max_tokens,
                     tools_needed=False,
                 ),
-                start_to_close_timeout=timedelta(seconds=180),
-                heartbeat_timeout=timedelta(seconds=60),
+                start_to_close_timeout=timedelta(seconds=600),
                 retry_policy=HAIKU_POLICY,
             )
         except Exception:  # noqa: BLE001

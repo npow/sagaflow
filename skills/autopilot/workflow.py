@@ -481,8 +481,7 @@ async def _spawn(
             max_tokens=max_tokens,
             tools_needed=False,
         ),
-        start_to_close_timeout=timedelta(seconds=240),
-        heartbeat_timeout=timedelta(seconds=60),
+        start_to_close_timeout=timedelta(seconds=600),
         retry_policy=policy,
     )
     return result

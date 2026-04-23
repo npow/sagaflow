@@ -90,8 +90,7 @@ class ProposalReviewWorkflow:
                 max_tokens=1024,
                 tools_needed=False,
             ),
-            start_to_close_timeout=timedelta(seconds=180),
-            heartbeat_timeout=timedelta(seconds=60),
+            start_to_close_timeout=timedelta(seconds=600),
             retry_policy=SONNET_POLICY,
         )
         claims_raw = claim_result.get("CLAIMS", "[]")
@@ -125,35 +124,50 @@ class ProposalReviewWorkflow:
                     max_tokens=1024,
                     tools_needed=False,
                 ),
-                start_to_close_timeout=timedelta(seconds=180),
-                heartbeat_timeout=timedelta(seconds=60),
+                start_to_close_timeout=timedelta(seconds=600),
                 retry_policy=HAIKU_POLICY,
             )
             for dim, ppath in zip(_CRITIQUE_DIMENSIONS, critic_prompt_paths)
         ]
         critic_outputs = await asyncio.gather(*critic_coros, return_exceptions=True)
 
-        # Quorum check.
-        parseable_count = sum(
-            1 for r in critic_outputs if not isinstance(r, BaseException)
-        )
+        # Quorum check — a result is "parseable" only if it's a dict with
+        # real structured output (not the malformed sentinel).
+        raw_critic_texts: list[str] = []  # collect raw text for fallback report
+        parseable_count = 0
+        for r in critic_outputs:
+            if isinstance(r, BaseException):
+                raw_critic_texts.append(f"[exception] {r}")
+            elif isinstance(r, dict) and r.get("_sagaflow_malformed"):
+                # Malformed sentinel — extract raw text but don't count as parseable.
+                raw_critic_texts.append(r.get("_raw", r.get("_error", "(malformed)")))
+            elif isinstance(r, dict):
+                parseable_count += 1
+                raw_critic_texts.append(r.get("WEAKNESSES", "(no weaknesses key)"))
+            else:
+                raw_critic_texts.append(str(r))
+
         if parseable_count < _QUORUM_MIN:
             return await self._terminate(
                 inp,
                 label=_LABEL_INSUFFICIENT,
                 reason=f"critic quorum failed ({parseable_count}/{len(_CRITIQUE_DIMENSIONS)} parseable)",
-                claims=[],
+                claims=claims,
                 weaknesses=[],
                 credibility_verdicts=[],
                 severity_verdicts=[],
                 landscape_verdict=None,
                 audit_result=None,
                 proposal_sha256=proposal_sha256,
+                raw_critic_texts=raw_critic_texts,
             )
 
         all_weaknesses: list[dict[str, str]] = []
         for dim, result in zip(_CRITIQUE_DIMENSIONS, critic_outputs):
             if isinstance(result, BaseException):
+                continue
+            # Skip malformed sentinels — already captured in raw_critic_texts.
+            if isinstance(result, dict) and result.get("_sagaflow_malformed"):
                 continue
             raw = result.get("WEAKNESSES", "[]")
             for w in _parse_json_list(raw):
@@ -195,8 +209,7 @@ class ProposalReviewWorkflow:
                         max_tokens=512,
                         tools_needed=False,
                     ),
-                    start_to_close_timeout=timedelta(seconds=180),
-                    heartbeat_timeout=timedelta(seconds=60),
+                    start_to_close_timeout=timedelta(seconds=600),
                     retry_policy=HAIKU_POLICY,
                 )
                 for ppath in fc_prompt_paths
@@ -258,8 +271,7 @@ class ProposalReviewWorkflow:
                     max_tokens=512,
                     tools_needed=False,
                 ),
-                start_to_close_timeout=timedelta(seconds=180),
-                heartbeat_timeout=timedelta(seconds=60),
+                start_to_close_timeout=timedelta(seconds=600),
                 retry_policy=HAIKU_POLICY,
             )
             pass1_verdict = p1_result.get("VERDICT_PASS_1", "UNVERIFIABLE")
@@ -287,8 +299,7 @@ class ProposalReviewWorkflow:
                     max_tokens=512,
                     tools_needed=False,
                 ),
-                start_to_close_timeout=timedelta(seconds=180),
-                heartbeat_timeout=timedelta(seconds=60),
+                start_to_close_timeout=timedelta(seconds=600),
                 retry_policy=HAIKU_POLICY,
             )
             final_verdict = p2_result.get("VERDICT_FINAL", pass1_verdict)
@@ -333,8 +344,7 @@ class ProposalReviewWorkflow:
                     max_tokens=512,
                     tools_needed=False,
                 ),
-                start_to_close_timeout=timedelta(seconds=180),
-                heartbeat_timeout=timedelta(seconds=60),
+                start_to_close_timeout=timedelta(seconds=600),
                 retry_policy=HAIKU_POLICY,
             )
             falsifiable_p1 = s1_result.get("FALSIFIABLE", "no").lower() == "yes"
@@ -364,8 +374,7 @@ class ProposalReviewWorkflow:
                     max_tokens=512,
                     tools_needed=False,
                 ),
-                start_to_close_timeout=timedelta(seconds=180),
-                heartbeat_timeout=timedelta(seconds=60),
+                start_to_close_timeout=timedelta(seconds=600),
                 retry_policy=HAIKU_POLICY,
             )
             falsifiable_final = s2_result.get("FALSIFIABLE", "no").lower() == "yes"
@@ -426,8 +435,7 @@ class ProposalReviewWorkflow:
                 max_tokens=512,
                 tools_needed=False,
             ),
-            start_to_close_timeout=timedelta(seconds=180),
-            heartbeat_timeout=timedelta(seconds=60),
+            start_to_close_timeout=timedelta(seconds=600),
             retry_policy=SONNET_POLICY,
         )
         landscape_verdict = {
@@ -479,8 +487,7 @@ class ProposalReviewWorkflow:
                 max_tokens=1024,
                 tools_needed=False,
             ),
-            start_to_close_timeout=timedelta(seconds=240),
-            heartbeat_timeout=timedelta(seconds=60),
+            start_to_close_timeout=timedelta(seconds=600),
             retry_policy=SONNET_POLICY,
         )
         audit_fidelity = audit_result_raw.get("REPORT_FIDELITY", "clean")
@@ -551,8 +558,7 @@ class ProposalReviewWorkflow:
                 max_tokens=4096,
                 tools_needed=False,
             ),
-            start_to_close_timeout=timedelta(seconds=240),
-            heartbeat_timeout=timedelta(seconds=60),
+            start_to_close_timeout=timedelta(seconds=600),
             retry_policy=SONNET_POLICY,
         )
         report_md = synth_result.get(
@@ -605,12 +611,14 @@ class ProposalReviewWorkflow:
         landscape_verdict: dict[str, str] | None,
         audit_result: dict[str, str] | None,
         proposal_sha256: str,
+        raw_critic_texts: list[str] | None = None,
     ) -> str:
         """Write a minimal report and emit finding for early-exit paths."""
         run_dir = inp.run_dir
         report_path = f"{run_dir}/review.md"
         report_md = _fallback_report(
-            claims, weaknesses, credibility_verdicts, severity_verdicts, label
+            claims, weaknesses, credibility_verdicts, severity_verdicts, label,
+            reason=reason, raw_critic_texts=raw_critic_texts,
         )
         await workflow.execute_activity(
             "write_artifact",
@@ -1016,29 +1024,66 @@ def _fallback_report(
     credibility_verdicts: list[dict[str, str]],
     severity_verdicts: list[dict[str, str]],
     label: str,
+    *,
+    reason: str | None = None,
+    raw_critic_texts: list[str] | None = None,
 ) -> str:
     lines = [
         "# Proposal Review Report",
         "",
-        "The synthesizer produced no structured output.",
-        "",
+    ]
+    if reason:
+        lines.extend([
+            f"**Early termination:** {reason}",
+            "",
+        ])
+    lines.extend([
         f"**Termination label:** {label}",
         f"**Claims extracted:** {len(claims)}",
         f"**Weaknesses found:** {len(weaknesses)}",
         "",
-        "## Fact-Check Results",
-        "",
-    ]
-    for cv in credibility_verdicts:
-        lines.append(
-            f"- Claim {cv.get('claim_id', '?')}: "
-            f"{cv.get('verdict', 'UNVERIFIABLE')} ({cv.get('confidence', 'low')})"
-        )
-    lines.extend(["", "## Weaknesses (Falsifiable Only)", ""])
-    for sv in severity_verdicts:
-        if sv.get("falsifiable") == "yes":
+    ])
+    # Claims section — always present so report is never empty.
+    if claims:
+        lines.extend(["## Extracted Claims", ""])
+        for c in claims:
+            tier = c.get("tier", "?")
+            lines.append(f"- [{tier}] {c.get('text', '(no text)')}")
+        lines.append("")
+
+    lines.extend(["## Fact-Check Results", ""])
+    if credibility_verdicts:
+        for cv in credibility_verdicts:
             lines.append(
-                f"- [{sv.get('severity', '?')}] [{sv.get('dimension', '?')}] "
-                f"{sv.get('title', '?')}: {sv.get('scenario', '')}"
+                f"- Claim {cv.get('claim_id', '?')}: "
+                f"{cv.get('verdict', 'UNVERIFIABLE')} ({cv.get('confidence', 'low')})"
             )
+    else:
+        lines.append("No fact-check verdicts were produced (review terminated early).")
+    lines.extend(["", "## Weaknesses (Falsifiable Only)", ""])
+    if severity_verdicts:
+        for sv in severity_verdicts:
+            if sv.get("falsifiable") == "yes":
+                lines.append(
+                    f"- [{sv.get('severity', '?')}] [{sv.get('dimension', '?')}] "
+                    f"{sv.get('title', '?')}: {sv.get('scenario', '')}"
+                )
+    else:
+        lines.append("No severity verdicts were produced (review terminated early).")
+
+    # Raw critic findings — dump whatever text was collected even if parsing failed.
+    if raw_critic_texts:
+        lines.extend(["", "## Raw Critic Findings", ""])
+        lines.append(
+            "The following raw outputs were collected from critic agents "
+            "(parsing may have failed for some):"
+        )
+        lines.append("")
+        for i, raw in enumerate(raw_critic_texts):
+            dim = _CRITIQUE_DIMENSIONS[i] if i < len(_CRITIQUE_DIMENSIONS) else f"critic-{i}"
+            lines.append(f"### {dim}")
+            lines.append("")
+            lines.append(f"```\n{raw}\n```")
+            lines.append("")
+
     return "\n".join(lines)

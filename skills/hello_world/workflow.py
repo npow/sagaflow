@@ -22,13 +22,9 @@ class HelloWorldInput:
     name: str
     inbox_path: str
     run_dir: str
+    greeter_system_prompt: str
+    greeter_user_prompt: str
     notify: bool = True
-
-
-def _spawn_greeter(state_run_dir: str, prompt_path: str) -> dict[str, str]:
-    """Indirection so tests can monkeypatch without touching Temporal internals."""
-
-    raise NotImplementedError  # workflow uses execute_activity directly; this is a test hook
 
 
 @workflow.defn(name="HelloWorldWorkflow")
@@ -38,7 +34,7 @@ class HelloWorldWorkflow:
         prompt_path = f"{inp.run_dir}/prompt.txt"
         await workflow.execute_activity(
             "write_artifact",
-            WriteArtifactInput(path=prompt_path, content=f"Greet {inp.name}"),
+            WriteArtifactInput(path=prompt_path, content=inp.greeter_user_prompt),
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=HAIKU_POLICY,
         )
@@ -48,17 +44,12 @@ class HelloWorldWorkflow:
             SpawnSubagentInput(
                 role="greeter",
                 tier_name="HAIKU",
-                system_prompt=(
-                    "You are a greeter. Output a greeting using the format "
-                    "STRUCTURED_OUTPUT_START / GREETING|<text> / STRUCTURED_OUTPUT_END. "
-                    "Do not include any other text."
-                ),
+                system_prompt=inp.greeter_system_prompt,
                 user_prompt_path=prompt_path,
                 max_tokens=64,
                 tools_needed=False,
             ),
-            start_to_close_timeout=timedelta(seconds=180),
-            heartbeat_timeout=timedelta(seconds=60),
+            start_to_close_timeout=timedelta(seconds=600),
             retry_policy=HAIKU_POLICY,
         )
 

@@ -117,8 +117,7 @@ class DeepQaWorkflow:
                 max_tokens=1024,
                 tools_needed=False,
             ),
-            start_to_close_timeout=timedelta(seconds=180),
-            heartbeat_timeout=timedelta(seconds=60),
+            start_to_close_timeout=timedelta(seconds=600),
             retry_policy=SONNET_POLICY,
         )
         angles_raw = dim_result.get("ANGLES", "[]")
@@ -198,8 +197,7 @@ class DeepQaWorkflow:
                         max_tokens=1024,
                         tools_needed=False,
                     ),
-                    start_to_close_timeout=timedelta(seconds=180),
-                    heartbeat_timeout=timedelta(seconds=60),
+                    start_to_close_timeout=timedelta(seconds=600),
                     retry_policy=HAIKU_POLICY,
                 )
                 for ppath in critic_prompt_paths
@@ -291,8 +289,7 @@ class DeepQaWorkflow:
                                 max_tokens=1024,
                                 tools_needed=False,
                             ),
-                            start_to_close_timeout=timedelta(seconds=120),
-                            heartbeat_timeout=timedelta(seconds=40),
+                            start_to_close_timeout=timedelta(seconds=600),
                             retry_policy=HAIKU_POLICY,
                         )
                     )
@@ -354,8 +351,7 @@ class DeepQaWorkflow:
                                     max_tokens=1024,
                                     tools_needed=False,
                                 ),
-                                start_to_close_timeout=timedelta(seconds=120),
-                                heartbeat_timeout=timedelta(seconds=40),
+                                start_to_close_timeout=timedelta(seconds=600),
                                 retry_policy=HAIKU_POLICY,
                             )
                         )
@@ -423,7 +419,6 @@ class DeepQaWorkflow:
                     tools_needed=True,
                 ),
                 start_to_close_timeout=timedelta(seconds=300),
-                heartbeat_timeout=timedelta(seconds=90),
                 retry_policy=HAIKU_POLICY,
             )
             raw_verification = verifier_result.get("VERIFICATION", "{}")
@@ -489,8 +484,7 @@ class DeepQaWorkflow:
                     max_tokens=1024,
                     tools_needed=False,
                 ),
-                start_to_close_timeout=timedelta(seconds=180),
-                heartbeat_timeout=timedelta(seconds=60),
+                start_to_close_timeout=timedelta(seconds=600),
                 retry_policy=SONNET_POLICY,
             )
             fidelity = audit_result.get("REPORT_FIDELITY", "compromised")
@@ -556,11 +550,16 @@ class DeepQaWorkflow:
                     max_tokens=4096,
                     tools_needed=False,
                 ),
-                start_to_close_timeout=timedelta(seconds=240),
-                heartbeat_timeout=timedelta(seconds=60),
+                start_to_close_timeout=timedelta(seconds=600),
                 retry_policy=SONNET_POLICY,
             )
-            report_md = synth_result.get("REPORT", final_report_md)
+            synth_report = synth_result.get("REPORT") or ""
+            # Fallback: if synth returned malformed output, a stub header, or
+            # an empty string, use the audited draft instead of a 1-line file.
+            if len(synth_report.strip()) > len("# QA Report\n"):
+                report_md = synth_report
+            else:
+                report_md = final_report_md
 
         await workflow.execute_activity(
             "write_artifact",

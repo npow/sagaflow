@@ -24,6 +24,37 @@ def _preflight_all() -> None:
     _a.run(preflight())
 
 
+def _resolve_skill(registry, skill: str, args: dict):  # type: ignore[type-arg]
+    """Return the SkillSpec for ``skill``, falling back to the generic interpreter.
+
+    Mutates ``args`` in-place: when the fallback fires, sets ``_target_skill`` so
+    ``skills.generic._build_input`` knows which claude-skill to load.
+
+    Raises ``click.UsageError`` (shape matches pre-existing callers' expectations)
+    if neither a registered skill nor a claude-skills SKILL.md exists for the name.
+    """
+    from sagaflow.prompts import claude_skills_dir
+
+    try:
+        return registry.get(skill)
+    except KeyError:
+        pass
+    claude_skill_md = claude_skills_dir() / skill / "SKILL.md"
+    if not claude_skill_md.exists():
+        raise click.UsageError(
+            f"unknown skill: {skill!r}; no SKILL.md at {claude_skill_md}"
+        ) from None
+    try:
+        spec = registry.get("generic")
+    except KeyError as exc:
+        raise click.UsageError(
+            f"unknown skill: {skill!r}; generic interpreter not registered "
+            f"(sagaflow.generic.workflow may be missing)"
+        ) from exc
+    args["_target_skill"] = skill
+    return spec
+
+
 def _start_workflow(skill: str, args: dict) -> str:  # type: ignore[type-arg]
     import asyncio as _a
     from datetime import datetime
@@ -33,8 +64,11 @@ def _start_workflow(skill: str, args: dict) -> str:  # type: ignore[type-arg]
     async def _go() -> str:
         client = await connect()
         registry = build_registry()
-        spec = registry.get(skill)
-        run_id = f"{skill}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        spec = _resolve_skill(registry, skill, args)
+        # Use the (possibly fallback-rewritten) spec.name for the run id so run
+        # ids always reflect the skill actually invoked.
+        effective = spec.name
+        run_id = f"{effective}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         from sagaflow.paths import Paths
 
         paths = Paths.from_env()
@@ -59,7 +93,7 @@ def _start_workflow(skill: str, args: dict) -> str:  # type: ignore[type-arg]
             return handle.id
 
         # Back-compat path for hello-world, which registered before build_input existed.
-        if skill == "hello-world":
+        if effective == "hello-world":
             from skills.hello_world.workflow import HelloWorldInput
 
             wf_input = HelloWorldInput(
@@ -75,7 +109,7 @@ def _start_workflow(skill: str, args: dict) -> str:  # type: ignore[type-arg]
                 task_queue=TASK_QUEUE,
             )
             return handle.id
-        raise NotImplementedError(f"launch wiring missing for skill {skill!r}")
+        raise NotImplementedError(f"launch wiring missing for skill {effective!r}")
 
     return _a.run(_go())
 
@@ -100,8 +134,25 @@ def _inbox() -> "Inbox":
 
 
 def _list_workflows() -> list[dict[str, str]]:
-    # Placeholder until a later task wires Temporal workflow listing.
-    return []
+    """Return recent sagaflow workflows from Temporal as {id, status} rows."""
+    import asyncio as _a
+
+    from sagaflow.temporal_client import TASK_QUEUE, connect
+
+    async def _go() -> list[dict[str, str]]:
+        client = await connect()
+        rows: list[dict[str, str]] = []
+        query = f"TaskQueue = '{TASK_QUEUE}'"
+        async for wf in client.list_workflows(query=query):
+            status = wf.status.name if wf.status is not None else "UNKNOWN"
+            rows.append({"id": wf.id, "status": status})
+        return rows
+
+    try:
+        return _a.run(_go())
+    except Exception as exc:  # noqa: BLE001
+        click.echo(f"warning: could not list workflows: {exc}", err=True)
+        return []
 
 
 @main.command(
@@ -126,11 +177,6 @@ def launch(ctx: click.Context, skill: str, name: str | None, args_list: tuple[st
       sagaflow launch deep-qa --path ./spec.md --arg type=doc --arg max_rounds=3
     """
 
-    _preflight_all()
-    _ensure_hook_installed()
-    _ensure_worker_running()
-
-    # Build the skill-specific args dict.
     args: dict[str, object] = {}
     if name is not None:
         args["name"] = name
@@ -141,13 +187,16 @@ def launch(ctx: click.Context, skill: str, name: str | None, args_list: tuple[st
             raise click.UsageError(f"--arg must be key=value, got {kv!r}")
         k, _, v = kv.partition("=")
         args[k.strip()] = v.strip()
-    # Any unrecognised positional args pass through as positional in args["_extra"].
     if ctx.args:
         args["_extra"] = list(ctx.args)
-
-    # Sensible defaults so hello-world keeps working with no flags.
     if skill == "hello-world" and "name" not in args:
         args["name"] = "world"
+
+    _validate_skill_and_args(skill, args)
+
+    _preflight_all()
+    _ensure_hook_installed()
+    _ensure_worker_running()
 
     workflow_id = _start_workflow(skill, args)
     click.echo(f"Launched {workflow_id}")
@@ -324,6 +373,32 @@ def _ensure_worker_running() -> None:
     from sagaflow.worker import ensure_worker_running
 
     _asyncio.run(ensure_worker_running())
+
+
+def _validate_skill_and_args(skill: str, args: dict) -> None:  # type: ignore[type-arg]
+    """Surface bad CLI invocations as UsageError before spending time on Temporal.
+
+    Catches unknown skill names and any ``ValueError`` raised by a skill's
+    ``build_input`` (the canonical place skills declare required args). Also
+    applies the generic-interpreter fallback: if ``skill`` isn't registered but
+    ``~/.claude/skills/<skill>/SKILL.md`` exists, route to the generic skill
+    (mutating ``args`` to stash ``_target_skill``).
+    """
+    from sagaflow.worker import build_registry
+
+    registry = build_registry()
+    spec = _resolve_skill(registry, skill, args)
+    if spec.build_input is None:
+        return
+    try:
+        spec.build_input(
+            run_id="__sagaflow_validate__",
+            run_dir="/tmp/__sagaflow_validate__",
+            inbox_path="/tmp/__sagaflow_validate_inbox__.md",
+            cli_args=args,
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from None
 
 
 if __name__ == "__main__":

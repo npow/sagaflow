@@ -143,3 +143,66 @@ async def test_proposal_reviewer_four_critics_all_called(tmp_path) -> None:
             )
 
     assert set(critic_dimensions) == {"viability", "competition", "structural", "evidence"}
+
+
+async def test_quorum_failure_with_malformed_sentinels_writes_substantive_report(tmp_path) -> None:
+    """When all 4 critics return malformed sentinels, quorum fails but review.md
+    must contain a substantive body — not just headers."""
+
+    @activity.defn(name="spawn_subagent")
+    async def _malformed_fake(inp: SpawnSubagentInput) -> dict[str, str]:
+        if inp.role == "claim-extractor":
+            return {
+                "CLAIMS": json.dumps([
+                    {"id": "c1", "text": "Revenue will triple.", "tier": "core"},
+                ])
+            }
+        if inp.role == "critic":
+            # Simulate the malformed sentinel that upstream now returns.
+            return {
+                "_sagaflow_malformed": "1",
+                "_error": "structured output parse failed",
+                "_raw": "The proposal has significant gaps in market analysis.",
+            }
+        return {}
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=TASK_QUEUE,
+            workflows=[ProposalReviewWorkflow],
+            activities=[write_artifact, emit_finding, _malformed_fake],
+            workflow_runner=SandboxedWorkflowRunner(
+                restrictions=SandboxRestrictions.default.with_passthrough_modules(
+                    "httpx", "anthropic", "sagaflow"
+                )
+            ),
+        ):
+            result = await env.client.execute_workflow(
+                ProposalReviewWorkflow.run,
+                ProposalReviewInput(
+                    run_id="pr-quorum",
+                    proposal_text="Triple revenue proposal.",
+                    inbox_path=str(tmp_path / "INBOX.md"),
+                    run_dir=str(tmp_path / "run-q"),
+                    notify=False,
+                ),
+                id="pr-quorum",
+                task_queue=TASK_QUEUE,
+            )
+
+    assert "critic quorum failed" in result
+
+    report_path = tmp_path / "run-q" / "review.md"
+    assert report_path.exists()
+    report_text = report_path.read_text()
+
+    # Report must NOT be empty — it must explain the situation.
+    assert len(report_text) > 200, f"report too short ({len(report_text)} bytes): {report_text!r}"
+    assert "Early termination" in report_text
+    assert "critic quorum failed" in report_text
+    # Raw critic findings must be dumped.
+    assert "Raw Critic Findings" in report_text
+    assert "significant gaps in market analysis" in report_text
+    # Claims extracted before quorum failure should still appear.
+    assert "Revenue will triple" in report_text

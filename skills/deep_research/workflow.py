@@ -596,7 +596,6 @@ async def _spawn(
             tools_needed=tools_needed,
         ),
         start_to_close_timeout=timedelta(seconds=300),
-        heartbeat_timeout=timedelta(seconds=60),
         retry_policy=SONNET_POLICY if tier == "SONNET" else HAIKU_POLICY,
     )
     return result if isinstance(result, dict) else {}

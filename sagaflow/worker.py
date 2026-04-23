@@ -58,7 +58,33 @@ def build_registry() -> SkillRegistry:
     flaky_test_diagnoser.register(registry)
     team.register(registry)
     autopilot.register(registry)
+
+    # Generic interpreter: runs any claude-skills SKILL.md via Claude tool-use.
+    # The workflow module is developed in parallel; if it hasn't landed yet, skip
+    # registration so the rest of the worker can still run.
+    try:
+        from skills import generic as generic_skill
+        generic_skill.register(registry)
+    except ImportError:
+        pass
+
     return registry
+
+
+def build_extra_workflows() -> list:
+    """Workflow classes beyond the 1-per-skill set tracked by SkillRegistry.
+
+    ``SubagentWorkflow`` is dispatched as a child by ``ClaudeSkillWorkflow`` but
+    doesn't correspond to a registered skill. Temporal workers must list every
+    workflow class in ``workflows=``, so we collect these here.
+    """
+    extras: list = []
+    try:
+        from skills import generic as generic_skill
+        extras.extend(generic_skill.extra_workflows())
+    except ImportError:
+        pass
+    return extras
 
 
 async def _is_worker_reachable(client: Client) -> bool:
@@ -99,10 +125,19 @@ async def run_worker(*, target: str = DEFAULT_TARGET) -> None:
 
     client = await connect(target=target)
     registry = build_registry()
+    workflows = list(registry.all_workflows())
+    # Seen-set lets us dedupe while preserving order (some extras may already
+    # be registered via a skill).
+    seen = {id(w) for w in workflows}
+    for extra in build_extra_workflows():
+        if id(extra) in seen:
+            continue
+        seen.add(id(extra))
+        workflows.append(extra)
     worker = Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=registry.all_workflows(),
+        workflows=workflows,
         activities=registry.all_activities(),
         workflow_runner=_build_sandbox_runner(),
     )

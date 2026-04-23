@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -13,7 +15,13 @@ from sagaflow.notify import notify_desktop
 from sagaflow.transport.anthropic_sdk import AnthropicSdkTransport, ModelTier
 from sagaflow.transport.claude_cli import ClaudeCliTransport
 from sagaflow.transport.dispatcher import SubagentRequest, dispatch_subagent
-from sagaflow.transport.structured_output import parse_structured
+from sagaflow.transport.structured_output import (
+    MalformedResponseError,
+    parse_structured,
+)
+
+MALFORMED_SENTINEL = "_sagaflow_malformed"
+HEARTBEAT_INTERVAL_SECONDS = 20.0
 
 
 @dataclass(frozen=True)
@@ -77,6 +85,22 @@ def _get_cli() -> ClaudeCliTransport:
     return ClaudeCliTransport()
 
 
+async def _heartbeat_loop() -> None:
+    """Emit `activity.heartbeat()` every HEARTBEAT_INTERVAL_SECONDS until cancelled.
+
+    Workflows set `heartbeat_timeout` on spawn_subagent to detect hung LLM calls.
+    Without an in-activity heartbeat, any LLM response taking longer than
+    heartbeat_timeout would false-trip. This loop keeps the activity alive.
+    """
+    while True:
+        try:
+            activity.heartbeat()
+        except Exception:
+            # Activity context may not be set in tests, or heartbeat target may be gone.
+            return
+        await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
+
+
 @activity.defn(name="spawn_subagent")
 async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
     prompt_path = Path(inp.user_prompt_path)
@@ -97,5 +121,32 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
         max_tokens=inp.max_tokens,
         tools_needed=inp.tools_needed,
     )
-    raw = await dispatch_subagent(request, sdk_transport=sdk, cli_transport=cli)
-    return parse_structured(raw)
+
+    beat_task: asyncio.Task[None] | None = None
+    try:
+        beat_task = asyncio.create_task(_heartbeat_loop())
+    except RuntimeError:
+        # No running event loop (shouldn't happen in activity context, but safe).
+        beat_task = None
+
+    try:
+        raw = await dispatch_subagent(request, sdk_transport=sdk, cli_transport=cli)
+    finally:
+        if beat_task is not None:
+            beat_task.cancel()
+            with contextlib.suppress(BaseException):
+                await beat_task
+
+    try:
+        return parse_structured(raw)
+    except MalformedResponseError as exc:
+        # Soft-fail: return a sentinel so the workflow can continue with partial data
+        # instead of crashing on one bad subagent response. Callers that need strict
+        # parsing can check `result.get(MALFORMED_SENTINEL)`; those that .get() real
+        # keys with defaults degrade gracefully.
+        truncated_raw = raw[:2000] if isinstance(raw, str) else ""
+        return {
+            MALFORMED_SENTINEL: "1",
+            "_error": str(exc),
+            "_raw": truncated_raw,
+        }

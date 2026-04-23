@@ -56,3 +56,41 @@ def test_launch_await_blocks_on_result() -> None:
     assert result.exit_code == 0
     await_.assert_called_once()
     assert "hello, bob" in result.output
+
+
+def test_launch_missing_required_arg_surfaces_before_worker() -> None:
+    # deep-qa requires --path; launch must fail with a UsageError before touching
+    # preflight / hook install / worker spawn. Prior to this test, missing-arg
+    # errors were hidden behind an opaque "worker did not become ready" failure.
+    runner = CliRunner()
+    with (
+        patch("sagaflow.cli._preflight_all") as preflight,
+        patch("sagaflow.cli._ensure_hook_installed") as hook_install,
+        patch("sagaflow.cli._ensure_worker_running") as worker,
+        patch("sagaflow.cli._start_workflow") as start,
+    ):
+        result = runner.invoke(main, ["launch", "deep-qa"])
+    assert result.exit_code != 0
+    combined = (result.output + str(result.exception or "")).lower()
+    assert "path" in combined or "proposal" in combined or "artifact" in combined
+    preflight.assert_not_called()
+    hook_install.assert_not_called()
+    worker.assert_not_called()
+    start.assert_not_called()
+
+
+def test_launch_unknown_skill_surfaces_before_worker() -> None:
+    runner = CliRunner()
+    with (
+        patch("sagaflow.cli._preflight_all") as preflight,
+        patch("sagaflow.cli._ensure_hook_installed") as hook_install,
+        patch("sagaflow.cli._ensure_worker_running") as worker,
+        patch("sagaflow.cli._start_workflow") as start,
+    ):
+        result = runner.invoke(main, ["launch", "nonexistent-skill"])
+    assert result.exit_code != 0
+    assert "nonexistent-skill" in result.output or "unknown" in result.output.lower()
+    preflight.assert_not_called()
+    hook_install.assert_not_called()
+    worker.assert_not_called()
+    start.assert_not_called()

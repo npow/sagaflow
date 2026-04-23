@@ -42,12 +42,28 @@ def parse_structured(text: str) -> dict[str, str]:
         raise MalformedResponseError("Structured block is present but empty")
 
     result: dict[str, str] = {}
+    current_key: str | None = None
     for line in body.splitlines():
         line = line.strip()
-        if not line or "|" not in line:
+        if not line:
+            # Blank lines inside a multi-line value are preserved.
+            if current_key is not None:
+                result[current_key] += "\n"
             continue
-        key, _, value = line.partition("|")
-        result[key.strip()] = value.strip()
+        if "|" in line:
+            key, _, value = line.partition("|")
+            key = key.strip()
+            # Heuristic: known keys are ALL_CAPS (possibly with digits/underscores).
+            # Lines where the part before the first pipe doesn't look like a key
+            # are continuation lines of the previous value.
+            if re.fullmatch(r"[A-Z][A-Z0-9_]*", key):
+                result[key] = value.strip()
+                current_key = key
+                continue
+        # Continuation line — append to previous key's value.
+        if current_key is not None:
+            result[current_key] += "\n" + line
+        # else: stray line before first key — ignore
 
     if not result:
         raise MalformedResponseError(
