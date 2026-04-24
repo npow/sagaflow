@@ -435,11 +435,15 @@ def mission_launch(mission_yaml: str, workspace: str | None) -> None:
         click.echo(f"error: mission validation failed: {exc}", err=True)
         sys.exit(1)
 
+    from sagaflow.missions.lib.paths import ensure_session_dirs
+    from datetime import datetime
+    run_id = f"mission-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    ensure_session_dirs(run_id)
+
     async def _go() -> str:
         client = await connect()
-        from datetime import datetime, timedelta
+        from datetime import timedelta
         from sagaflow.missions.workflow import MissionWorkflow
-        run_id = f"mission-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         handle = await client.start_workflow(
             MissionWorkflow.run,
             args=[m],
