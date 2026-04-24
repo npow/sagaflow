@@ -449,3 +449,143 @@ async def test_novelty_two_verified_sources_downgrades(tmp_path) -> None:
     assert not (tmp_path / "run" / "vocabulary_bootstrap.json").exists()
     # But the workflow should still complete.
     assert (tmp_path / "run" / "research-report.md").exists()
+
+
+# ---------------------------------------------------------------------------
+# Adversarial tests — crash modes discovered in production
+# ---------------------------------------------------------------------------
+
+
+def test_safe_year_handles_range_string() -> None:
+    """LLM returned '2020-2024' for year — crashed with ValueError."""
+    from skills.deep_research.workflow import _safe_year
+
+    assert _safe_year("2020-2024") == 2020
+    assert _safe_year("2023") == 2023
+    assert _safe_year(2023) == 2023
+    assert _safe_year(0) == 0
+    assert _safe_year("") == 0
+    assert _safe_year(None) == 0
+    assert _safe_year("unknown") == 0
+    assert _safe_year("circa 1990") == 0
+    assert _safe_year("2020, 2021") == 2020
+
+
+async def test_year_range_in_novelty_sources_no_crash(tmp_path) -> None:
+    """Workflow must not crash when LLM returns year as '2020-2024'."""
+
+    @activity.defn(name="spawn_subagent")
+    async def _fake_bad_year(inp: SpawnSubagentInput) -> dict[str, str]:
+        if inp.role == "novelty-classify":
+            return {
+                "NOVELTY_CLASS": "familiar",
+                "RECALLED_SOURCES": json.dumps([
+                    {"title": "Survey Paper", "authors_or_org": "Org", "year": "2020-2024", "confidence": "high"},
+                    {"title": "Blog Post", "authors_or_org": "Author", "year": "unknown", "confidence": "medium"},
+                    {"title": "No Year", "authors_or_org": "Anon", "confidence": "low"},
+                ]),
+                "VERIFIED_COUNT": "3",
+            }
+        return await _fake(inp)
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=TASK_QUEUE,
+            workflows=[DeepResearchWorkflow],
+            activities=[write_artifact, emit_finding, _fake_bad_year],
+            workflow_runner=_SANDBOX,
+        ):
+            result = await env.client.execute_workflow(
+                DeepResearchWorkflow.run,
+                DeepResearchInput(
+                    run_id="dr-bad-year",
+                    seed="Topic with date ranges",
+                    inbox_path=str(tmp_path / "INBOX.md"),
+                    run_dir=str(tmp_path / "run"),
+                    max_directions=3,
+                    notify=False,
+                ),
+                id="dr-bad-year",
+                task_queue=TASK_QUEUE,
+            )
+    assert (tmp_path / "run" / "research-report.md").exists()
+
+
+async def test_sub_direction_generation_replenishes_frontier(tmp_path) -> None:
+    """After Round 1, the direction-expander should add new directions for Round 2."""
+    rounds_seen = []
+
+    @activity.defn(name="spawn_subagent")
+    async def _fake_with_expansion(inp: SpawnSubagentInput) -> dict[str, str]:
+        if inp.role == "direction-expander":
+            new_dirs = [
+                {"id": "d_sub_1", "dimension": "ACTUAL-USAGE", "question": "Who actually uses framework X?", "priority": "high"},
+                {"id": "d_sub_2", "dimension": "PRIOR-FAILURE", "question": "What deprecated approaches existed?", "priority": "medium"},
+            ]
+            return {"DIRECTIONS": json.dumps(new_dirs)}
+        if inp.role == "researcher":
+            rounds_seen.append(1)
+        return await _fake(inp)
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=TASK_QUEUE,
+            workflows=[DeepResearchWorkflow],
+            activities=[write_artifact, emit_finding, _fake_with_expansion],
+            workflow_runner=_SANDBOX,
+        ):
+            result = await env.client.execute_workflow(
+                DeepResearchWorkflow.run,
+                DeepResearchInput(
+                    run_id="dr-expand",
+                    seed="Topic needing expansion",
+                    inbox_path=str(tmp_path / "INBOX.md"),
+                    run_dir=str(tmp_path / "run"),
+                    max_directions=3,
+                    max_rounds=5,
+                    notify=False,
+                ),
+                id="dr-expand",
+                task_queue=TASK_QUEUE,
+            )
+    # With 3 initial directions + 2 sub-directions per round, we should see
+    # more researcher calls than just the initial 3.
+    assert len(rounds_seen) > 3, f"Expected >3 researcher calls from expansion, got {len(rounds_seen)}"
+
+
+async def test_malformed_direction_json_no_crash(tmp_path) -> None:
+    """Workflow survives when dim-discover returns garbage JSON."""
+
+    @activity.defn(name="spawn_subagent")
+    async def _fake_bad_json(inp: SpawnSubagentInput) -> dict[str, str]:
+        if inp.role == "dim-discover":
+            return {"DIRECTIONS": "this is not valid json [[["}
+        if inp.role == "direction-expander":
+            return {"DIRECTIONS": "[]"}
+        return await _fake(inp)
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=TASK_QUEUE,
+            workflows=[DeepResearchWorkflow],
+            activities=[write_artifact, emit_finding, _fake_bad_json],
+            workflow_runner=_SANDBOX,
+        ):
+            result = await env.client.execute_workflow(
+                DeepResearchWorkflow.run,
+                DeepResearchInput(
+                    run_id="dr-badjson",
+                    seed="Topic",
+                    inbox_path=str(tmp_path / "INBOX.md"),
+                    run_dir=str(tmp_path / "run"),
+                    max_directions=3,
+                    notify=False,
+                ),
+                id="dr-badjson",
+                task_queue=TASK_QUEUE,
+            )
+    # Should produce a report even with 0 directions (fallback path).
+    assert (tmp_path / "run" / "research-report.md").exists()
