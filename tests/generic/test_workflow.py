@@ -125,7 +125,7 @@ async def _run_workflow(
         activities=activities,
         workflow_runner=SandboxedWorkflowRunner(
             restrictions=SandboxRestrictions.default.with_passthrough_modules(
-                "httpx", "anthropic", "sagaflow"
+                "httpx", "anthropic", "sagaflow", "pydantic", "skills", "claude_skill_"
             )
         ),
     ):

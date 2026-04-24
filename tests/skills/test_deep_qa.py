@@ -33,7 +33,7 @@ from skills.deep_qa.workflow import DeepQaInput, DeepQaWorkflow
 # ---------------------------------------------------------------------------
 
 _SANDBOX_RESTRICTIONS = SandboxRestrictions.default.with_passthrough_modules(
-    "httpx", "anthropic", "sagaflow"
+    "httpx", "anthropic", "sagaflow", "pydantic", "skills", "claude_skill_"
 )
 
 

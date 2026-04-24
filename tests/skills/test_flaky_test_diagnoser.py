@@ -21,16 +21,20 @@ from skills.flaky_test_diagnoser.workflow import FlakyTestInput, FlakyTestWorkfl
 
 # ── fake activities ────────────────────────────────────────────────────────────
 
-_run_counter: list[int] = []  # module-level to allow the fake to alternate pass/fail
 
+def _make_fake_run_test_subprocess() -> tuple:
+    """Factory returning (activity_fn, counter) with isolated state per test."""
+    counter: list[int] = []
 
-@activity.defn(name="run_test_subprocess")
-async def _fake_run_test_subprocess(command: str, timeout: int = 60) -> dict[str, int]:
-    """Alternate pass/fail to simulate ~50% flakiness."""
-    call_index = len(_run_counter)
-    _run_counter.append(call_index)
-    exit_code = 1 if call_index % 2 == 1 else 0  # 0=pass on even, 1=fail on odd
-    return {"exit_code": exit_code, "duration_ms": 42}
+    @activity.defn(name="run_test_subprocess")
+    async def _fake_run_test_subprocess(command: str, timeout: int = 60) -> dict[str, int]:
+        """Alternate pass/fail to simulate ~50% flakiness."""
+        call_index = len(counter)
+        counter.append(call_index)
+        exit_code = 1 if call_index % 2 == 1 else 0
+        return {"exit_code": exit_code, "duration_ms": 42}
+
+    return _fake_run_test_subprocess, counter
 
 
 @activity.defn(name="spawn_subagent")
@@ -88,8 +92,7 @@ async def _fake_spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
 
 
 async def test_flaky_test_diagnoser_roundtrip(tmp_path) -> None:
-    # Reset global counter so the test is idempotent if run multiple times.
-    _run_counter.clear()
+    fake_run, run_counter = _make_fake_run_test_subprocess()
 
     run_dir = tmp_path / "run"
 
@@ -102,11 +105,11 @@ async def test_flaky_test_diagnoser_roundtrip(tmp_path) -> None:
                 write_artifact,
                 emit_finding,
                 _fake_spawn_subagent,
-                _fake_run_test_subprocess,
+                fake_run,
             ],
             workflow_runner=SandboxedWorkflowRunner(
                 restrictions=SandboxRestrictions.default.with_passthrough_modules(
-                    "httpx", "anthropic", "sagaflow"
+                    "httpx", "anthropic", "sagaflow", "pydantic", "skills", "claude_skill_"
                 )
             ),
         ):
@@ -140,7 +143,7 @@ async def test_flaky_test_diagnoser_roundtrip(tmp_path) -> None:
     assert "ftd-test-1" in inbox_text
 
     # 4 subprocess calls were made (n_runs=4).
-    assert len(_run_counter) == 4
+    assert len(run_counter) == 4
 
 
 async def test_flaky_test_diagnoser_not_reproduced(tmp_path) -> None:
@@ -165,7 +168,7 @@ async def test_flaky_test_diagnoser_not_reproduced(tmp_path) -> None:
             ],
             workflow_runner=SandboxedWorkflowRunner(
                 restrictions=SandboxRestrictions.default.with_passthrough_modules(
-                    "httpx", "anthropic", "sagaflow"
+                    "httpx", "anthropic", "sagaflow", "pydantic", "skills", "claude_skill_"
                 )
             ),
         ):

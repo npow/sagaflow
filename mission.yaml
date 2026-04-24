@@ -1,0 +1,109 @@
+mission: |
+  Fix three workflow-internal bugs that cause empty-stub final reports in sagaflow skills:
+
+  1. deep-qa: `~/.sagaflow/runs/<rid>/qa-report.md` is 11 bytes / 0 lines despite
+     intermediate files (critic-r0-*.txt, synth-prompt.txt, judge-inputs/, etc.)
+     all being populated. Synthesis runs but its result never reaches the file.
+     File to investigate: skills/deep_qa/workflow.py (search for synth / final
+     report / qa-report.md writes). Probably a missing write_artifact call, or
+     the synth LLM call returns empty text, or the tool_result is discarded.
+     FIX: ensure qa-report.md receives the synth output AND has a fallback body
+     if synth returns empty (render findings directly from judges).
+
+  2. deep-plan: `~/.sagaflow/runs/<rid>/plan.md` is 46 bytes / 0 lines (just the
+     title header). Happens when the "rubber-stamp filter" short-circuits to the
+     termination label `consensus_reached_at_iter_0_after_rubber_stamp_filter`
+     without actually having the planner write a plan body. adr.md gets written
+     correctly (300B/15 lines); plan.md does not. File: skills/deep_plan/workflow.py
+     (search for rubber_stamp / plan.md writes / final plan body).
+     FIX: the rubber-stamp-filter path must still produce a real plan body, OR
+     refuse to approve at iter 0 with no planner output.
+
+  3. proposal-reviewer: `~/.sagaflow/runs/<rid>/review.md` is 62 bytes / 0 lines.
+     Critic quorum fails (0/4 parseable — critics return text that doesn't match
+     the STRUCTURED_OUTPUT schema). The malformed-sentinel I added upstream
+     already makes this non-fatal at the activity level, but the workflow still
+     has no findings to synthesize. File: skills/proposal_reviewer/workflow.py.
+     FIX: when critic_quorum < threshold, write a review.md that says so
+     explicitly (current state: "label=insufficient_evidence_to_review" in the
+     INBOX finding but review.md itself is empty); OR tighten critic prompts so
+     Haiku produces parseable structured blocks reliably.
+
+  Environment:
+  - Repo: /Users/npow/code/skillflow (workspace)
+  - Python: /Users/npow/code/skillflow/.venv/bin/python
+  - Install: `python3.11 -m pip install --user --break-system-packages --upgrade /Users/npow/code/skillflow`
+  - Worker restart: `pkill -f 'sagaflow worker' ; sleep 1 ; nohup sagaflow worker run >/tmp/sagaflow-worker.log 2>&1 &`
+  - Sagaflow CLI: /Users/npow/.local/bin/sagaflow
+  - Temporal: localhost:7233
+  - Create your own tmp artifacts for deep-qa (~200-word doc) and proposal-reviewer (~260-word proposal)
+
+  WORK IN ORDER:
+  1. Read each of the 3 workflow.py files to locate the bug site.
+  2. Make targeted fixes. Keep them small.
+  3. Run the sagaflow test suite: `.venv/bin/python -m pytest -q --ignore=tests/e2e --timeout=60`. Must pass.
+  4. Reinstall + restart worker.
+  5. Run each of the 3 skills end-to-end. Verify the FINAL REPORT file
+     (qa-report.md / plan.md / review.md) has >=10 lines of real content.
+
+success_criteria:
+  - id: tests-pass
+    description: Full pytest suite (excluding e2e) passes
+    check: |
+      cd /Users/npow/code/skillflow && .venv/bin/python -m pytest -q --ignore=tests/e2e --timeout=60 2>&1 | tail -3 | grep -E '[0-9]+ passed' | grep -qv failed
+
+  - id: reinstalled
+    description: sagaflow reinstalled from current source
+    check: |
+      python3.11 -m pip install --user --break-system-packages --upgrade /Users/npow/code/skillflow 2>&1 | tail -5 | grep -qE 'Successfully installed sagaflow'
+
+  - id: worker-restarted
+    description: sagaflow worker polling
+    check: |
+      pkill -f 'sagaflow worker' 2>/dev/null || true
+      sleep 2
+      nohup sagaflow worker run >/tmp/sagaflow-worker.log 2>&1 &
+      sleep 4
+      ps aux | grep 'sagaflow worker run' | grep -v grep | head -1 | grep -q sagaflow
+
+  - id: deep-qa-report-has-content
+    description: |
+      Most recent deep-qa run has qa-report.md >=10 lines AND >=500 bytes of
+      real content (proxies for synthesis actually producing a report).
+    check: |
+      rid=$(ls -t "$HOME/.sagaflow/runs" 2>/dev/null | grep '^deep-qa-' | head -1)
+      [ -n "$rid" ] || exit 1
+      rep="$HOME/.sagaflow/runs/$rid/qa-report.md"
+      test -f "$rep" || exit 1
+      lines=$(wc -l <"$rep" | tr -d ' ')
+      bytes=$(wc -c <"$rep" | tr -d ' ')
+      [ "$lines" -ge 10 ] && [ "$bytes" -ge 500 ]
+
+  - id: deep-plan-has-plan-body
+    description: |
+      Most recent deep-plan run has plan.md >=10 lines AND >=500 bytes (not
+      just the title header).
+    check: |
+      rid=$(ls -t "$HOME/.sagaflow/runs" 2>/dev/null | grep '^deep-plan-' | head -1)
+      [ -n "$rid" ] || exit 1
+      rep="$HOME/.sagaflow/runs/$rid/plan.md"
+      test -f "$rep" || exit 1
+      lines=$(wc -l <"$rep" | tr -d ' ')
+      bytes=$(wc -c <"$rep" | tr -d ' ')
+      [ "$lines" -ge 10 ] && [ "$bytes" -ge 500 ]
+
+  - id: proposal-reviewer-has-review-body
+    description: |
+      Most recent proposal-reviewer run has review.md >=10 lines AND >=500 bytes.
+      If critics unavoidably fail the quorum, the workflow should still write
+      a self-explanatory review.md that states so (not leave it empty).
+    check: |
+      rid=$(ls -t "$HOME/.sagaflow/runs" 2>/dev/null | grep '^proposal-reviewer-' | head -1)
+      [ -n "$rid" ] || exit 1
+      rep="$HOME/.sagaflow/runs/$rid/review.md"
+      test -f "$rep" || exit 1
+      lines=$(wc -l <"$rep" | tr -d ' ')
+      bytes=$(wc -c <"$rep" | tr -d ' ')
+      [ "$lines" -ge 10 ] && [ "$bytes" -ge 500 ]
+
+workspace: /Users/npow/code/skillflow

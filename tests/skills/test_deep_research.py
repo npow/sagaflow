@@ -102,7 +102,7 @@ async def _fake(inp: SpawnSubagentInput) -> dict[str, str]:
 
 _SANDBOX = SandboxedWorkflowRunner(
     restrictions=SandboxRestrictions.default.with_passthrough_modules(
-        "httpx", "anthropic", "sagaflow", "skills"
+        "httpx", "anthropic", "sagaflow", "pydantic", "skills", "claude_skill_"
     )
 )
 

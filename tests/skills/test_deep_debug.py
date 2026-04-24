@@ -26,7 +26,7 @@ from skills.deep_debug.workflow import DeepDebugInput, DeepDebugWorkflow
 # ── shared worker helper ─────────────────────────────────────────────────────
 
 _PASSTHROUGH = SandboxRestrictions.default.with_passthrough_modules(
-    "httpx", "anthropic", "sagaflow"
+    "httpx", "anthropic", "sagaflow", "pydantic", "skills", "claude_skill_"
 )
 
 SYMPTOM = "Test intermittently fails with AssertionError."

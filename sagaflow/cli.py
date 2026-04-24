@@ -92,23 +92,6 @@ def _start_workflow(skill: str, args: dict) -> str:  # type: ignore[type-arg]
             )
             return handle.id
 
-        # Back-compat path for hello-world, which registered before build_input existed.
-        if effective == "hello-world":
-            from skills.hello_world.workflow import HelloWorldInput
-
-            wf_input = HelloWorldInput(
-                run_id=run_id,
-                name=args["name"],
-                inbox_path=str(paths.inbox),
-                run_dir=str(run_dir),
-            )
-            handle = await client.start_workflow(
-                spec.workflow_cls.run,
-                wf_input,
-                id=run_id,
-                task_queue=TASK_QUEUE,
-            )
-            return handle.id
         raise NotImplementedError(f"launch wiring missing for skill {effective!r}")
 
     return _a.run(_go())
@@ -399,6 +382,127 @@ def _validate_skill_and_args(skill: str, args: dict) -> None:  # type: ignore[ty
         )
     except ValueError as exc:
         raise click.UsageError(str(exc)) from None
+
+
+# ---------------------------------------------------------------------------
+# mission subcommands — absorbed from swarmd CLI
+# ---------------------------------------------------------------------------
+
+
+@main.group()
+def mission() -> None:
+    """Mission-enforced agent runner with criteria verification."""
+
+
+@mission.command(name="launch")
+@click.argument("mission_yaml", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--workspace",
+    type=click.Path(),
+    default=None,
+    help="Override mission.workspace. Must be an absolute path.",
+)
+def mission_launch(mission_yaml: str, workspace: str | None) -> None:
+    """Start a MissionWorkflow from a mission.yaml file."""
+    import asyncio as _a
+    import yaml
+    from pathlib import Path as _Path
+    from sagaflow.temporal_client import TASK_QUEUE, connect
+    from sagaflow.missions.schemas.mission import Mission
+
+    try:
+        text = _Path(mission_yaml).read_text()
+    except OSError as exc:
+        click.echo(f"error: cannot read {mission_yaml!r}: {exc}", err=True)
+        sys.exit(1)
+
+    try:
+        data = yaml.safe_load(text)
+    except Exception as exc:
+        click.echo(f"error: mission YAML is malformed: {exc}", err=True)
+        sys.exit(1)
+
+    if not isinstance(data, dict):
+        click.echo(f"error: mission YAML must be a mapping, got {type(data).__name__}", err=True)
+        sys.exit(1)
+
+    if workspace is not None:
+        data["workspace"] = workspace
+
+    try:
+        m = Mission.model_validate(data)
+    except Exception as exc:
+        click.echo(f"error: mission validation failed: {exc}", err=True)
+        sys.exit(1)
+
+    async def _go() -> str:
+        client = await connect()
+        from datetime import datetime, timedelta
+        from sagaflow.missions.workflow import MissionWorkflow
+        run_id = f"mission-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        handle = await client.start_workflow(
+            MissionWorkflow.run,
+            args=[m],
+            id=run_id,
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=m.max_duration_sec) if m.max_duration_sec else None,
+        )
+        return handle.id
+
+    _preflight_all()
+    _ensure_worker_running()
+    workflow_id = _a.run(_go())
+    click.echo(f"workflow_id={workflow_id}")
+
+
+@mission.command(name="status")
+@click.argument("workflow_id")
+def mission_status(workflow_id: str) -> None:
+    """Query a running MissionWorkflow for its phase + criteria state."""
+    import asyncio as _a
+    import json
+    from sagaflow.temporal_client import connect
+
+    async def _go() -> dict:
+        client = await connect()
+        handle = client.get_workflow_handle(workflow_id)
+        return await handle.query("get_status")
+
+    try:
+        result = _a.run(_go())
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "not found" in msg or "not_found" in msg:
+            click.echo(f"error: workflow {workflow_id!r} not found", err=True)
+            sys.exit(1)
+        click.echo(f"error: status query failed: {exc}", err=True)
+        sys.exit(1)
+    click.echo(json.dumps(result, indent=2, default=str))
+
+
+@mission.command(name="abort")
+@click.argument("workflow_id")
+@click.option("--reason", default="user-abort", help="Reason for aborting.")
+def mission_abort(workflow_id: str, reason: str) -> None:
+    """Send the abort signal to a running MissionWorkflow."""
+    import asyncio as _a
+    from sagaflow.temporal_client import connect
+
+    async def _go() -> None:
+        client = await connect()
+        handle = client.get_workflow_handle(workflow_id)
+        await handle.signal("abort", reason)
+
+    try:
+        _a.run(_go())
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "not found" in msg or "not_found" in msg:
+            click.echo(f"error: workflow {workflow_id!r} not found", err=True)
+            sys.exit(1)
+        click.echo(f"error: abort signal failed: {exc}", err=True)
+        sys.exit(1)
+    click.echo(f"abort signal sent to {workflow_id}")
 
 
 if __name__ == "__main__":

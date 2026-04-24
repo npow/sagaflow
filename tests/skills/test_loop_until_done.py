@@ -69,7 +69,7 @@ async def test_loop_until_done_happy_path(tmp_path) -> None:
             activities=[write_artifact, emit_finding, _fake_spawn_subagent],
             workflow_runner=SandboxedWorkflowRunner(
                 restrictions=SandboxRestrictions.default.with_passthrough_modules(
-                    "httpx", "anthropic", "sagaflow"
+                    "httpx", "anthropic", "sagaflow", "pydantic", "skills", "claude_skill_"
                 )
             ),
         ):

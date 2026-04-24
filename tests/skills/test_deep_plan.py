@@ -125,7 +125,7 @@ async def _fake_spawn_unparseable(inp: SpawnSubagentInput) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 _PASSTHROUGH = SandboxRestrictions.default.with_passthrough_modules(
-    "httpx", "anthropic", "sagaflow"
+    "httpx", "anthropic", "sagaflow", "pydantic", "skills", "claude_skill_"
 )
 
 

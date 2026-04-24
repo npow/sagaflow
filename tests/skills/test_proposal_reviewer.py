@@ -60,7 +60,7 @@ async def test_proposal_reviewer_roundtrip_produces_report(tmp_path) -> None:
             activities=[write_artifact, emit_finding, _fake_spawn_subagent],
             workflow_runner=SandboxedWorkflowRunner(
                 restrictions=SandboxRestrictions.default.with_passthrough_modules(
-                    "httpx", "anthropic", "sagaflow"
+                    "httpx", "anthropic", "sagaflow", "pydantic", "skills", "claude_skill_"
                 )
             ),
         ):
@@ -125,7 +125,7 @@ async def test_proposal_reviewer_four_critics_all_called(tmp_path) -> None:
             activities=[write_artifact, emit_finding, _tracking_fake],
             workflow_runner=SandboxedWorkflowRunner(
                 restrictions=SandboxRestrictions.default.with_passthrough_modules(
-                    "httpx", "anthropic", "sagaflow"
+                    "httpx", "anthropic", "sagaflow", "pydantic", "skills", "claude_skill_"
                 )
             ),
         ):
@@ -174,7 +174,7 @@ async def test_quorum_failure_with_malformed_sentinels_writes_substantive_report
             activities=[write_artifact, emit_finding, _malformed_fake],
             workflow_runner=SandboxedWorkflowRunner(
                 restrictions=SandboxRestrictions.default.with_passthrough_modules(
-                    "httpx", "anthropic", "sagaflow"
+                    "httpx", "anthropic", "sagaflow", "pydantic", "skills", "claude_skill_"
                 )
             ),
         ):
