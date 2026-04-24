@@ -16,7 +16,7 @@ class SubagentRequest:
     user_prompt: str
     max_tokens: int
     tools_needed: bool
-    cli_timeout_seconds: float = 600.0
+    cli_timeout_seconds: float = 3600.0
 
 
 async def dispatch_subagent(
