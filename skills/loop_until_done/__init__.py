@@ -6,18 +6,10 @@ import json
 from typing import Any
 
 from sagaflow.durable.activities import emit_finding, spawn_subagent, write_artifact
-from sagaflow.prompts import PromptNotFoundError, load_claude_skill_prompt
+from sagaflow.prompts import load_claude_skill_prompt
 from sagaflow.registry import SkillRegistry, SkillSpec
 
 from skills.loop_until_done.workflow import LoopUntilDoneInput, LoopUntilDoneWorkflow
-
-
-def _load_or_empty(skill: str, name: str, *, substitutions: dict[str, str] | None = None) -> str:
-    """Load a prompt from claude-skills, returning '' if the file hasn't been extracted yet."""
-    try:
-        return load_claude_skill_prompt(skill, name, substitutions=substitutions)
-    except PromptNotFoundError:
-        return ""
 
 
 def _build_input(
@@ -45,17 +37,17 @@ def _build_input(
         run_dir=run_dir,
         max_iter=max_iter,
         notify=True,
-        prd_system_prompt=_load_or_empty("loop-until-done", "prd.system"),
-        prd_user_prompt=_load_or_empty(
+        prd_system_prompt=load_claude_skill_prompt("loop-until-done", "prd.system"),
+        prd_user_prompt=load_claude_skill_prompt(
             "loop-until-done", "prd.user", substitutions={"task": task_str},
         ),
-        falsifiability_system_prompt=_load_or_empty("loop-until-done", "falsifiability.system"),
+        falsifiability_system_prompt=load_claude_skill_prompt("loop-until-done", "falsifiability.system"),
         falsifiability_user_prompt="",  # dynamic: depends on generated criteria
-        executor_system_prompt=_load_or_empty("loop-until-done", "executor.system"),
+        executor_system_prompt=load_claude_skill_prompt("loop-until-done", "executor.system"),
         executor_user_prompt="",  # dynamic: depends on per-story data
-        verifier_system_prompt=_load_or_empty("loop-until-done", "verifier.system"),
+        verifier_system_prompt=load_claude_skill_prompt("loop-until-done", "verifier.system"),
         verifier_user_prompt="",  # dynamic: depends on per-criterion data
-        reviewer_system_prompt=_load_or_empty("loop-until-done", "reviewer.system"),
+        reviewer_system_prompt=load_claude_skill_prompt("loop-until-done", "reviewer.system"),
         reviewer_user_prompt="",  # dynamic: depends on full run results
     )
 

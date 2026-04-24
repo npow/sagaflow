@@ -59,7 +59,7 @@ class LoopUntilDoneWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=prd_prompt_path,
-                content=inp.prd_user_prompt or _prd_user_prompt(inp.task),
+                content=inp.prd_user_prompt,
             ),
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=HAIKU_POLICY,
@@ -69,7 +69,7 @@ class LoopUntilDoneWorkflow:
             SpawnSubagentInput(
                 role="prd",
                 tier_name="SONNET",
-                system_prompt=inp.prd_system_prompt or _prd_system_prompt(),
+                system_prompt=inp.prd_system_prompt,
                 user_prompt_path=prd_prompt_path,
                 max_tokens=2048,
                 tools_needed=False,
@@ -104,7 +104,7 @@ class LoopUntilDoneWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=falsifiability_prompt_path,
-                content=inp.falsifiability_user_prompt or _falsifiability_user_prompt(all_criteria),
+                content=inp.falsifiability_user_prompt or _falsifiability_user_prompt(all_criteria),  # runtime-dynamic
             ),
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=HAIKU_POLICY,
@@ -114,7 +114,7 @@ class LoopUntilDoneWorkflow:
             SpawnSubagentInput(
                 role="falsifiability",
                 tier_name="HAIKU",
-                system_prompt=inp.falsifiability_system_prompt or _falsifiability_system_prompt(),
+                system_prompt=inp.falsifiability_system_prompt,
                 user_prompt_path=falsifiability_prompt_path,
                 max_tokens=1024,
                 tools_needed=False,
@@ -143,7 +143,7 @@ class LoopUntilDoneWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=executor_prompt_path,
-                    content=inp.executor_user_prompt or _executor_user_prompt(story, inp.task),
+                    content=inp.executor_user_prompt or _executor_user_prompt(story, inp.task),  # runtime-dynamic
                 ),
                 start_to_close_timeout=timedelta(seconds=10),
                 retry_policy=HAIKU_POLICY,
@@ -153,7 +153,7 @@ class LoopUntilDoneWorkflow:
                 SpawnSubagentInput(
                     role="executor",
                     tier_name="SONNET",
-                    system_prompt=inp.executor_system_prompt or _executor_system_prompt(),
+                    system_prompt=inp.executor_system_prompt,
                     user_prompt_path=executor_prompt_path,
                     max_tokens=1024,
                     tools_needed=False,
@@ -186,7 +186,7 @@ class LoopUntilDoneWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=reviewer_prompt_path,
-                content=inp.reviewer_user_prompt or _reviewer_user_prompt(
+                content=inp.reviewer_user_prompt or _reviewer_user_prompt(  # runtime-dynamic
                     stories=stories,
                     falsifiable_criteria=falsifiable_criteria,
                     verify_results=verify_results,
@@ -201,7 +201,7 @@ class LoopUntilDoneWorkflow:
             SpawnSubagentInput(
                 role="reviewer",
                 tier_name="SONNET",
-                system_prompt=inp.reviewer_system_prompt or _reviewer_system_prompt(),
+                system_prompt=inp.reviewer_system_prompt,
                 user_prompt_path=reviewer_prompt_path,
                 max_tokens=1024,
                 tools_needed=False,
@@ -229,7 +229,7 @@ async def _run_verifier(
         "write_artifact",
         WriteArtifactInput(
             path=verifier_prompt_path,
-            content=inp.verifier_user_prompt or _verifier_user_prompt(crit, work_descriptions),
+            content=inp.verifier_user_prompt or _verifier_user_prompt(crit, work_descriptions),  # runtime-dynamic
         ),
         start_to_close_timeout=timedelta(seconds=10),
         retry_policy=HAIKU_POLICY,
@@ -239,7 +239,7 @@ async def _run_verifier(
         SpawnSubagentInput(
             role="verifier",
             tier_name="HAIKU",
-            system_prompt=inp.verifier_system_prompt or _verifier_system_prompt(),
+            system_prompt=inp.verifier_system_prompt,
             user_prompt_path=verifier_prompt_path,
             max_tokens=512,
             tools_needed=False,
@@ -283,41 +283,6 @@ async def _write_summary_and_emit(
 # --- prompt templates ---
 
 
-def _prd_system_prompt() -> str:
-    return (
-        "You are a PRD planner. Given a task, produce a concise product requirements "
-        "document as structured stories with acceptance criteria. Each criterion must "
-        "include a verification_command (shell command or 'simulate') and "
-        "expected_pattern (what to look for in output). Respond using STRUCTURED_OUTPUT.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        'STORIES|[{"id":"s1","title":"<title>","criteria":[{"id":"c1","criterion":"<text>",'
-        '"verification_command":"<cmd>","expected_pattern":"<pattern>"}]}, ...]\n'
-        "STRUCTURED_OUTPUT_END\n"
-        "STORIES must be valid JSON."
-    )
-
-
-def _prd_user_prompt(task: str) -> str:
-    return (
-        f"Task: {task}\n\n"
-        "Generate 1-3 stories with 1-3 acceptance criteria each. Keep it concise and "
-        "focused. Each criterion must be independently verifiable."
-    )
-
-
-def _falsifiability_system_prompt() -> str:
-    return (
-        "You are a falsifiability judge. For each acceptance criterion, decide whether "
-        "it is concretely verifiable (pass) or vague/untestable (fail). Only pass "
-        "criteria that have a specific, observable outcome.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        'CRITERION_VERDICTS|[{"criterion_id":"c1","pass":true,"rationale":"<why>"}, ...]\n'
-        "STRUCTURED_OUTPUT_END\n"
-        "CRITERION_VERDICTS must be valid JSON."
-    )
-
 
 def _falsifiability_user_prompt(criteria: list[dict[str, str]]) -> str:
     return (
@@ -326,17 +291,6 @@ def _falsifiability_user_prompt(criteria: list[dict[str, str]]) -> str:
         "For each, emit pass=true if concretely verifiable, pass=false if not."
     )
 
-
-def _executor_system_prompt() -> str:
-    return (
-        "You are a task executor. Given a story and the overall task, describe the work "
-        "you would do to complete it. In v0.2 you simulate — describe what would be done "
-        "without actually executing code.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        "WORK_DESCRIPTION|<summary of work done for this story>\n"
-        "STRUCTURED_OUTPUT_END"
-    )
 
 
 def _executor_user_prompt(story: dict[str, object], task: str) -> str:
@@ -347,20 +301,6 @@ def _executor_user_prompt(story: dict[str, object], task: str) -> str:
         "Describe what work was done to complete this story (simulate in v0.2)."
     )
 
-
-def _verifier_system_prompt() -> str:
-    return (
-        "You are a verifier. Given an acceptance criterion and a description of work done, "
-        "decide whether the criterion passes. In v0.2 you simulate verification.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        "VERIFIED|true\n"
-        "STRUCTURED_OUTPUT_END\n"
-        "or\n"
-        "STRUCTURED_OUTPUT_START\n"
-        "VERIFIED|false\n"
-        "STRUCTURED_OUTPUT_END"
-    )
 
 
 def _verifier_user_prompt(
@@ -376,20 +316,6 @@ def _verifier_user_prompt(
         "Does the work description satisfy this criterion? (simulate in v0.2)"
     )
 
-
-def _reviewer_system_prompt() -> str:
-    return (
-        "You are a final reviewer. Given stories, their criteria verdicts, and work "
-        "descriptions, emit one of these terminal labels:\n"
-        "  all_stories_passed — all verifiable criteria passed\n"
-        "  blocked_on_story_X — story X has failing criteria (use actual story id)\n"
-        "  budget_exhausted — too many iterations without convergence\n"
-        "  reviewer_rejected_N_times — you've rejected N times already\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        "OVERALL_VERDICT|<label>\n"
-        "STRUCTURED_OUTPUT_END"
-    )
 
 
 def _reviewer_user_prompt(

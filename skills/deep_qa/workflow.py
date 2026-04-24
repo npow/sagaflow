@@ -29,6 +29,7 @@ import asyncio
 import json
 from dataclasses import dataclass
 from datetime import timedelta
+from string import Template
 
 from temporalio import workflow
 
@@ -56,18 +57,22 @@ class DeepQaInput:
     run_dir: str
     max_rounds: int = 3
     notify: bool = True
-    # Optional prompt overrides — loaded from ~/.claude/skills/deep-qa/prompts/*.md
-    # at build_input time. Empty string means "use inline default".
+    # Prompt overrides — loaded from ~/.claude/skills/deep-qa/prompts/*.md
+    # at build_input time via load_claude_skill_prompt.
     dim_discovery_system_prompt: str = ""
     dim_discovery_user_prompt: str = ""
     critic_system_prompt: str = ""
     critic_user_prompt: str = ""
     judge_pass1_system_prompt: str = ""
+    judge_pass1_user_prompt: str = ""
     judge_pass2_system_prompt: str = ""
+    judge_pass2_user_prompt: str = ""
     auditor_system_prompt: str = ""
+    auditor_user_prompt: str = ""
     verifier_system_prompt: str = ""
     verifier_user_prompt: str = ""
     synth_system_prompt: str = ""
+    synth_user_prompt: str = ""
 
 
 # Bounded parallelism per round (spec: max 6 critics per round).
@@ -108,8 +113,10 @@ class DeepQaWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=dim_prompt_path,
-                content=inp.dim_discovery_user_prompt or _dim_discovery_user_prompt(
-                    artifact_text=artifact_text, artifact_type=inp.artifact_type
+                content=Template(inp.dim_discovery_user_prompt).safe_substitute(
+                    artifact_type=inp.artifact_type,
+                    artifact_length=str(len(artifact_text)),
+                    artifact_text=artifact_text[:20000],
                 ),
             ),
             start_to_close_timeout=timedelta(seconds=10),
@@ -124,7 +131,7 @@ class DeepQaWorkflow:
             SpawnSubagentInput(
                 role="dim-discover",
                 tier_name="SONNET",
-                system_prompt=inp.dim_discovery_system_prompt or _dim_discovery_system_prompt(),
+                system_prompt=inp.dim_discovery_system_prompt,
                 user_prompt_path=dim_prompt_path,
                 max_tokens=1024,
                 tools_needed=False,
@@ -186,10 +193,11 @@ class DeepQaWorkflow:
                     "write_artifact",
                     WriteArtifactInput(
                         path=ppath,
-                        content=inp.critic_user_prompt or _critic_user_prompt(
-                            artifact_text=artifact_text,
-                            angle=angle,
+                        content=Template(inp.critic_user_prompt).safe_substitute(
+                            angle_question=angle.question,
+                            angle_dimension=angle.dimension,
                             artifact_type=inp.artifact_type,
+                            artifact_text=artifact_text[:20000],
                         ),
                     ),
                     start_to_close_timeout=timedelta(seconds=10),
@@ -204,7 +212,7 @@ class DeepQaWorkflow:
                     SpawnSubagentInput(
                         role="critic",
                         tier_name="HAIKU",
-                        system_prompt=inp.critic_system_prompt or _critic_system_prompt(),
+                        system_prompt=inp.critic_system_prompt,
                         user_prompt_path=ppath,
                         max_tokens=1024,
                         tools_needed=False,
@@ -282,7 +290,9 @@ class DeepQaWorkflow:
                         f"{inp.run_dir}/judge-inputs/batch_r{round_idx}_{batch_num}.txt"
                     )
                     # Write blind judge input (severity stripped from each defect).
-                    blind_content = _blind_judge_prompt(judge_batch, pass_num=1)
+                    blind_content = Template(inp.judge_pass1_user_prompt).safe_substitute(
+                        defects_text=_format_defects_blind(judge_batch),
+                    )
                     await workflow.execute_activity(
                         "write_artifact",
                         WriteArtifactInput(path=judge_input_path, content=blind_content),
@@ -296,7 +306,7 @@ class DeepQaWorkflow:
                             SpawnSubagentInput(
                                 role="judge-pass-1",
                                 tier_name="HAIKU",
-                                system_prompt=inp.judge_pass1_system_prompt or _judge_system_prompt(pass_num=1),
+                                system_prompt=inp.judge_pass1_system_prompt,
                                 user_prompt_path=judge_input_path,
                                 max_tokens=1024,
                                 tools_needed=False,
@@ -344,7 +354,9 @@ class DeepQaWorkflow:
                         p2_path = (
                             f"{inp.run_dir}/judge-inputs/batch_pass2_r{round_idx}_{batch_num}.txt"
                         )
-                        p2_content = _informed_judge_prompt(p2_batch, pass_num=2)
+                        p2_content = Template(inp.judge_pass2_user_prompt).safe_substitute(
+                            defects_text=_format_defects_informed(p2_batch),
+                        )
                         await workflow.execute_activity(
                             "write_artifact",
                             WriteArtifactInput(path=p2_path, content=p2_content),
@@ -358,7 +370,7 @@ class DeepQaWorkflow:
                                 SpawnSubagentInput(
                                     role="judge-pass-2",
                                     tier_name="HAIKU",
-                                    system_prompt=inp.judge_pass2_system_prompt or _judge_system_prompt(pass_num=2),
+                                    system_prompt=inp.judge_pass2_system_prompt,
                                     user_prompt_path=p2_path,
                                     max_tokens=1024,
                                     tools_needed=False,
@@ -414,7 +426,9 @@ class DeepQaWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=verifier_prompt_path,
-                    content=inp.verifier_user_prompt or _verifier_user_prompt(artifact_text=artifact_text),
+                    content=Template(inp.verifier_user_prompt).safe_substitute(
+                        artifact_text=artifact_text[:30000],
+                    ),
                 ),
                 start_to_close_timeout=timedelta(seconds=10),
                 retry_policy=HAIKU_POLICY,
@@ -424,7 +438,7 @@ class DeepQaWorkflow:
                 SpawnSubagentInput(
                     role="verifier",
                     tier_name="HAIKU",
-                    system_prompt=inp.verifier_system_prompt or _verifier_system_prompt(),
+                    system_prompt=inp.verifier_system_prompt,
                     user_prompt_path=verifier_prompt_path,
                     max_tokens=1024,
                     # tools_needed=True routes to claude_cli (WebFetch capable).
@@ -478,9 +492,10 @@ class DeepQaWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=audit_input_path,
-                    content=_auditor_user_prompt(
-                        draft_report_md=draft_report_md,
-                        defects=all_defects,
+                    content=Template(inp.auditor_user_prompt).safe_substitute(
+                        defect_count=str(len(all_defects)),
+                        verdict_summary=_format_verdict_summary(all_defects),
+                        draft_report_md=draft_report_md[:8000],
                     ),
                 ),
                 start_to_close_timeout=timedelta(seconds=10),
@@ -491,7 +506,7 @@ class DeepQaWorkflow:
                 SpawnSubagentInput(
                     role="auditor",
                     tier_name="SONNET",
-                    system_prompt=inp.auditor_system_prompt or _auditor_system_prompt(),
+                    system_prompt=inp.auditor_system_prompt,
                     user_prompt_path=audit_input_path,
                     max_tokens=1024,
                     tools_needed=False,
@@ -539,14 +554,28 @@ class DeepQaWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=synth_prompt_path,
-                    content=_synth_user_prompt(
+                    content=Template(inp.synth_user_prompt).safe_substitute(
                         artifact_type=inp.artifact_type,
-                        defects=all_defects,
-                        rounds_run=rounds_run,
-                        max_rounds=inp.max_rounds,
+                        rounds_run=str(rounds_run),
+                        max_rounds=str(inp.max_rounds),
                         termination_label=termination_label,
-                        draft_report_md=final_report_md,
-                        verification_result=verification_result,
+                        verification_section=(
+                            f"\nFact verification results: {json.dumps(verification_result)}\n"
+                            if verification_result is not None else ""
+                        ),
+                        defect_count=str(len(all_defects)),
+                        defects_json=json.dumps(
+                            [
+                                {
+                                    "id": d.id, "title": d.title, "severity": d.severity,
+                                    "dimension": d.dimension, "scenario": d.scenario,
+                                    "root_cause": d.root_cause, "judge_status": d.judge_status,
+                                }
+                                for d in all_defects
+                            ],
+                            indent=2,
+                        ),
+                        draft_report_md=final_report_md[:4000],
                     ),
                 ),
                 start_to_close_timeout=timedelta(seconds=10),
@@ -557,7 +586,7 @@ class DeepQaWorkflow:
                 SpawnSubagentInput(
                     role="synth",
                     tier_name="SONNET",
-                    system_prompt=inp.synth_system_prompt or _synth_system_prompt(),
+                    system_prompt=inp.synth_system_prompt,
                     user_prompt_path=synth_prompt_path,
                     max_tokens=4096,
                     tools_needed=False,
@@ -606,98 +635,13 @@ class DeepQaWorkflow:
 
 
 # ---------------------------------------------------------------------------
-# Prompt templates
+# Runtime formatting helpers (used to fill $placeholders in .md templates)
 # ---------------------------------------------------------------------------
 
 
-def _dim_discovery_system_prompt() -> str:
-    return (
-        "You are a QA dimension-discovery agent. Given an artifact, enumerate 4-8 "
-        "independent QA angles that would find the most important defects. Each "
-        "angle is a specific question a critic could try to answer. Be concrete — "
-        "avoid vague angles like 'is this correct'. Respond using the "
-        "STRUCTURED_OUTPUT contract.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        'ANGLES|[{"id":"a1","dimension":"<name>","question":"<one sentence>"}, ...]\n'
-        "STRUCTURED_OUTPUT_END\n"
-        "The ANGLES value must be valid JSON. Keep it compact."
-    )
-
-
-def _dim_discovery_user_prompt(artifact_text: str, artifact_type: str) -> str:
-    return (
-        f"Artifact type: {artifact_type}\n"
-        f"Length: {len(artifact_text)} chars\n\n"
-        "Generate 4-8 QA angles that cover different failure modes (correctness, "
-        "edge cases, security/safety, maintainability, clarity, interop). Don't "
-        "duplicate — each angle should attack a different dimension.\n\n"
-        "--- ARTIFACT START ---\n"
-        f"{artifact_text[:20000]}\n"
-        "--- ARTIFACT END ---\n"
-    )
-
-
-def _critic_system_prompt() -> str:
-    return (
-        "You are a QA critic. Given an artifact and one specific angle, find "
-        "real defects. A defect needs a concrete scenario (when does it fail?), "
-        "root cause, and severity. Only flag real problems — don't pad.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        'DEFECTS|[{"id":"d1","title":"<short>","severity":"critical|major|minor",'
-        '"dimension":"<from angle>","scenario":"<concrete trigger>","root_cause":"<why>"}, ...]\n'
-        "STRUCTURED_OUTPUT_END\n"
-        "If no real defects, emit DEFECTS|[]. Do not invent problems."
-    )
-
-
-def _critic_user_prompt(
-    artifact_text: str, angle: "Angle", artifact_type: str
-) -> str:
-    return (
-        f"Angle: {angle.question}\n"
-        f"Dimension: {angle.dimension}\n"
-        f"Artifact type: {artifact_type}\n\n"
-        "--- ARTIFACT START ---\n"
-        f"{artifact_text[:20000]}\n"
-        "--- ARTIFACT END ---\n"
-    )
-
-
-def _judge_system_prompt(pass_num: int) -> str:
-    if pass_num == 1:
-        return (
-            "You are an independent severity judge (pass 1 — blind). "
-            "You will receive a list of defects WITHOUT their critic-proposed severity. "
-            "Assign severity (critical, major, minor) to each based solely on the defect "
-            "description and scenario. Do not anchor to any prior classification.\n\n"
-            "Output format:\n"
-            "STRUCTURED_OUTPUT_START\n"
-            'VERDICTS|[{"defect_id":"<id>","severity":"critical|major|minor",'
-            '"confidence":"high|medium|low","calibration":"confirm","rationale":"<one line>"}, ...]\n'
-            "STRUCTURED_OUTPUT_END\n"
-            "The VERDICTS value must be valid JSON."
-        )
-    else:
-        return (
-            "You are an independent severity judge (pass 2 — informed). "
-            "You will receive each defect WITH the critic-proposed severity AND the pass-1 "
-            "blind verdict. You may confirm, upgrade, or downgrade the severity. "
-            "Your verdict is AUTHORITATIVE — it overrides the critic's classification.\n\n"
-            "Output format:\n"
-            "STRUCTURED_OUTPUT_START\n"
-            'VERDICTS|[{"defect_id":"<id>","severity":"critical|major|minor",'
-            '"confidence":"high|medium|low","calibration":"confirm|upgrade|downgrade",'
-            '"rationale":"<one line>"}, ...]\n'
-            "STRUCTURED_OUTPUT_END\n"
-            "The VERDICTS value must be valid JSON."
-        )
-
-
-def _blind_judge_prompt(defects: list["Defect"], pass_num: int) -> str:
-    """Blind pass-1 prompt: severity field stripped from each defect."""
-    lines = [f"Pass {pass_num} severity judging. Defects (severity omitted — you must assign):\n"]
+def _format_defects_blind(defects: list["Defect"]) -> str:
+    """Format defects for pass-1 blind judge (severity stripped)."""
+    lines: list[str] = []
     for d in defects:
         lines.append(f"Defect ID: {d.id}")
         lines.append(f"Title: {d.title}")
@@ -708,11 +652,9 @@ def _blind_judge_prompt(defects: list["Defect"], pass_num: int) -> str:
     return "\n".join(lines)
 
 
-def _informed_judge_prompt(defects: list["Defect"], pass_num: int) -> str:
-    """Informed pass-2 prompt: includes critic-proposed severity AND pass-1 verdict."""
-    lines = [
-        f"Pass {pass_num} severity judging. Confirm, upgrade, or downgrade each verdict.\n"
-    ]
+def _format_defects_informed(defects: list["Defect"]) -> str:
+    """Format defects for pass-2 informed judge (includes severity + pass-1 verdict)."""
+    lines: list[str] = []
     for d in defects:
         lines.append(f"Defect ID: {d.id}")
         lines.append(f"Title: {d.title}")
@@ -728,123 +670,16 @@ def _informed_judge_prompt(defects: list["Defect"], pass_num: int) -> str:
     return "\n".join(lines)
 
 
-def _auditor_system_prompt() -> str:
-    return (
-        "You are a rationalization auditor. Given a draft QA report and the underlying "
-        "judge verdicts, determine whether the report faithfully represents the verdicts. "
-        "Look for: defects dropped without justification, severity softened relative to "
-        "judge verdicts, or coordinator prose that contradicts the structured verdicts.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        "DEFECTS_TOTAL|<integer>\n"
-        "DEFECTS_CARRIED|<integer>\n"
-        "SUSPICIOUS_PATTERNS|<comma-separated list or 'none'>\n"
-        "REPORT_FIDELITY|clean|compromised\n"
-        "RATIONALE|<one line>\n"
-        "STRUCTURED_OUTPUT_END"
-    )
-
-
-def _auditor_user_prompt(draft_report_md: str, defects: list["Defect"]) -> str:
-    verdict_summary_lines = []
+def _format_verdict_summary(defects: list["Defect"]) -> str:
+    """Format verdict summary for auditor user prompt."""
+    lines: list[str] = []
     for d in defects:
         p2 = d.judge_pass_2_verdict
         p2_sev = p2.severity if p2 else "no-pass2"
-        verdict_summary_lines.append(
+        lines.append(
             f"  - {d.id}: critic={d.severity}, judge_p2={p2_sev}, judge_status={d.judge_status}"
         )
-    verdict_summary = "\n".join(verdict_summary_lines) or "  (no defects)"
-    return (
-        f"Total defects in registry: {len(defects)}\n\n"
-        f"Judge verdicts summary:\n{verdict_summary}\n\n"
-        "--- DRAFT REPORT START ---\n"
-        f"{draft_report_md[:8000]}\n"
-        "--- DRAFT REPORT END ---\n\n"
-        "Is the report fidelity clean or compromised? "
-        "Output REPORT_FIDELITY|clean if all defects are faithfully represented. "
-        "Output REPORT_FIDELITY|compromised if defects were dropped or severity was misrepresented."
-    )
-
-
-def _verifier_system_prompt() -> str:
-    return (
-        "You are a fact-verification agent for research artifacts. "
-        "Extract up to 20 factual claims from the artifact and spot-check them. "
-        "For numerical claims, verify exact figures. For citations, check accessibility.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        'VERIFICATION|{"checked_count":<int>,"total_claims":<int>,'
-        '"accessible_rate":<float 0-1>,"mismatches":<int>}\n'
-        "STRUCTURED_OUTPUT_END\n"
-        "The VERIFICATION value must be valid JSON."
-    )
-
-
-def _verifier_user_prompt(artifact_text: str) -> str:
-    return (
-        "Artifact to verify (research type):\n\n"
-        "--- ARTIFACT START ---\n"
-        f"{artifact_text[:30000]}\n"
-        "--- ARTIFACT END ---\n\n"
-        "Extract up to 20 factual claims. For each, verify the claim is accurate and "
-        "citations are accessible. Emit the VERIFICATION structured output."
-    )
-
-
-def _synth_system_prompt() -> str:
-    return (
-        "You are a QA report synthesizer. Given a list of defects and a draft report, "
-        "write a concise qa-report.md grouping by severity (critical → major → minor). "
-        "Be honest — include an executive summary, termination label, and call out if "
-        "there are no findings. Do not invent new defects; work from what the critics and "
-        "judges reported.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        "REPORT|<full markdown report body here — use literal newlines inside the value>\n"
-        "STRUCTURED_OUTPUT_END\n"
-        "IMPORTANT: the REPORT value is a single pipe-separated field; put the ENTIRE "
-        "markdown report (including headings) after the first pipe. Do not add extra "
-        "pipe characters within the report — the parser uses the FIRST pipe as the "
-        "key/value separator and preserves the rest verbatim."
-    )
-
-
-def _synth_user_prompt(
-    artifact_type: str,
-    defects: list["Defect"],
-    rounds_run: int,
-    max_rounds: int,
-    termination_label: str,
-    draft_report_md: str,
-    verification_result: dict | None,
-) -> str:
-    defect_dicts = [
-        {
-            "id": d.id,
-            "title": d.title,
-            "severity": d.severity,
-            "dimension": d.dimension,
-            "scenario": d.scenario,
-            "root_cause": d.root_cause,
-            "judge_status": d.judge_status,
-        }
-        for d in defects
-    ]
-    verification_section = ""
-    if verification_result is not None:
-        verification_section = (
-            f"\nFact verification results: {json.dumps(verification_result)}\n"
-        )
-    return (
-        f"Artifact type: {artifact_type}\n"
-        f"Rounds executed: {rounds_run} / {max_rounds}\n"
-        f"Termination label: {termination_label}\n"
-        f"{verification_section}"
-        f"Defects found ({len(defects)}):\n"
-        f"{json.dumps(defect_dicts, indent=2)}\n\n"
-        f"Draft report (from audited assembly):\n{draft_report_md[:4000]}\n\n"
-        "Write the final report."
-    )
+    return "\n".join(lines) or "  (no defects)"
 
 
 # ---------------------------------------------------------------------------

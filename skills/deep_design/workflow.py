@@ -102,7 +102,7 @@ class DeepDesignWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=draft_prompt_path,
-                content=inp.draft_user_prompt or _draft_user_prompt(concept=inp.concept),
+                content=inp.draft_user_prompt,
             ),
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=HAIKU_POLICY,
@@ -112,7 +112,7 @@ class DeepDesignWorkflow:
             SpawnSubagentInput(
                 role="draft",
                 tier_name="SONNET",
-                system_prompt=inp.draft_system_prompt or _draft_system_prompt(),
+                system_prompt=inp.draft_system_prompt,
                 user_prompt_path=draft_prompt_path,
                 max_tokens=4096,
                 tools_needed=False,
@@ -136,7 +136,7 @@ class DeepDesignWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=fact_sheet_prompt_path,
-                    content=inp.fact_sheet_user_prompt or _fact_sheet_user_prompt(spec_md=state.spec_draft),
+                    content=inp.fact_sheet_user_prompt or _fact_sheet_user_prompt(spec_md=state.spec_draft),  # runtime-dynamic
                 ),
                 start_to_close_timeout=timedelta(seconds=10),
                 retry_policy=HAIKU_POLICY,
@@ -146,7 +146,7 @@ class DeepDesignWorkflow:
                 SpawnSubagentInput(
                     role="fact-sheet",
                     tier_name="HAIKU",
-                    system_prompt=inp.fact_sheet_system_prompt or _fact_sheet_system_prompt(),
+                    system_prompt=inp.fact_sheet_system_prompt,
                     user_prompt_path=fact_sheet_prompt_path,
                     max_tokens=512,
                     tools_needed=False,
@@ -169,7 +169,7 @@ class DeepDesignWorkflow:
                     "write_artifact",
                     WriteArtifactInput(
                         path=ppath,
-                        content=inp.critic_user_prompt or _critic_user_prompt(
+                        content=inp.critic_user_prompt or _critic_user_prompt(  # runtime-dynamic
                             spec_md=state.spec_draft,
                             concept=inp.concept,
                             critic_index=i,
@@ -186,7 +186,7 @@ class DeepDesignWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=of_prompt_path,
-                    content=inp.outside_frame_user_prompt or _outside_frame_user_prompt(concept=inp.concept),
+                    content=inp.outside_frame_user_prompt,
                 ),
                 start_to_close_timeout=timedelta(seconds=10),
                 retry_policy=HAIKU_POLICY,
@@ -199,7 +199,7 @@ class DeepDesignWorkflow:
                     SpawnSubagentInput(
                         role="critic",
                         tier_name="HAIKU",
-                        system_prompt=inp.critic_system_prompt or _critic_system_prompt(),
+                        system_prompt=inp.critic_system_prompt,
                         user_prompt_path=ppath,
                         max_tokens=1024,
                         tools_needed=False,
@@ -214,7 +214,7 @@ class DeepDesignWorkflow:
                 SpawnSubagentInput(
                     role="outside-frame",
                     tier_name="HAIKU",
-                    system_prompt=inp.outside_frame_system_prompt or _outside_frame_system_prompt(),
+                    system_prompt=inp.outside_frame_system_prompt,
                     user_prompt_path=of_prompt_path,
                     max_tokens=1024,
                     tools_needed=False,
@@ -313,7 +313,7 @@ class DeepDesignWorkflow:
                     "write_artifact",
                     WriteArtifactInput(
                         path=judge_prompt_path,
-                        content=inp.judge_pass1_user_prompt or _judge_pass1_user_prompt(
+                        content=inp.judge_pass1_user_prompt or _judge_pass1_user_prompt(  # runtime-dynamic
                             flaw=flaw, spec_md=state.spec_draft
                         ),
                     ),
@@ -325,7 +325,7 @@ class DeepDesignWorkflow:
                     SpawnSubagentInput(
                         role="judge-pass-1",
                         tier_name="HAIKU",
-                        system_prompt=inp.judge_system_prompt or _judge_system_prompt(),
+                        system_prompt=inp.judge_system_prompt,
                         user_prompt_path=judge_prompt_path,
                         max_tokens=512,
                         tools_needed=False,
@@ -344,7 +344,7 @@ class DeepDesignWorkflow:
                     "write_artifact",
                     WriteArtifactInput(
                         path=judge_p2_prompt_path,
-                        content=inp.judge_pass2_user_prompt or _judge_pass2_user_prompt(
+                        content=inp.judge_pass2_user_prompt or _judge_pass2_user_prompt(  # runtime-dynamic
                             flaw=flaw,
                             pass1_verdict=p1_verdict or "minor",
                             original_severity=flaw.severity,
@@ -358,7 +358,7 @@ class DeepDesignWorkflow:
                     SpawnSubagentInput(
                         role="judge-pass-2",
                         tier_name="HAIKU",
-                        system_prompt=inp.judge_system_prompt or _judge_system_prompt(),
+                        system_prompt=inp.judge_system_prompt,
                         user_prompt_path=judge_p2_prompt_path,
                         max_tokens=512,
                         tools_needed=False,
@@ -397,7 +397,7 @@ class DeepDesignWorkflow:
                     "write_artifact",
                     WriteArtifactInput(
                         path=challenger_prompt_path,
-                        content=inp.challenger_user_prompt or _challenger_user_prompt(
+                        content=inp.challenger_user_prompt or _challenger_user_prompt(  # runtime-dynamic
                             flaw=flaw, spec_md=state.spec_draft
                         ),
                     ),
@@ -409,7 +409,7 @@ class DeepDesignWorkflow:
                     SpawnSubagentInput(
                         role="challenger",
                         tier_name="HAIKU",
-                        system_prompt=inp.challenger_system_prompt or _challenger_system_prompt(),
+                        system_prompt=inp.challenger_system_prompt,
                         user_prompt_path=challenger_prompt_path,
                         max_tokens=512,
                         tools_needed=False,
@@ -438,7 +438,7 @@ class DeepDesignWorkflow:
                     "write_artifact",
                     WriteArtifactInput(
                         path=cross_fix_prompt_path,
-                        content=inp.cross_fix_user_prompt or _cross_fix_user_prompt(
+                        content=inp.cross_fix_user_prompt or _cross_fix_user_prompt(  # runtime-dynamic
                             flaws=accepted_flaws, spec_md=state.spec_draft
                         ),
                     ),
@@ -450,7 +450,7 @@ class DeepDesignWorkflow:
                     SpawnSubagentInput(
                         role="cross-fix",
                         tier_name="HAIKU",
-                        system_prompt=inp.cross_fix_system_prompt or _cross_fix_system_prompt(),
+                        system_prompt=inp.cross_fix_system_prompt,
                         user_prompt_path=cross_fix_prompt_path,
                         max_tokens=512,
                         tools_needed=False,
@@ -474,7 +474,7 @@ class DeepDesignWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=redesign_prompt_path,
-                    content=inp.redesign_user_prompt or _redesign_user_prompt(
+                    content=inp.redesign_user_prompt or _redesign_user_prompt(  # runtime-dynamic
                         spec_md=state.spec_draft,
                         flaws=accepted_flaws,
                         invariants=state.component_invariants,
@@ -489,7 +489,7 @@ class DeepDesignWorkflow:
                 SpawnSubagentInput(
                     role="redesign",
                     tier_name="SONNET",
-                    system_prompt=inp.redesign_system_prompt or _redesign_system_prompt(),
+                    system_prompt=inp.redesign_system_prompt,
                     user_prompt_path=redesign_prompt_path,
                     max_tokens=4096,
                     tools_needed=False,
@@ -523,7 +523,7 @@ class DeepDesignWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=inv_prompt_path,
-                    content=inp.invariant_validator_user_prompt or _invariant_validator_user_prompt(
+                    content=inp.invariant_validator_user_prompt or _invariant_validator_user_prompt(  # runtime-dynamic
                         spec_md=state.spec_draft,
                         invariants=state.component_invariants,
                     ),
@@ -536,7 +536,7 @@ class DeepDesignWorkflow:
                 SpawnSubagentInput(
                     role="invariant-validator",
                     tier_name="HAIKU",
-                    system_prompt=inp.invariant_validator_system_prompt or _invariant_validator_system_prompt(),
+                    system_prompt=inp.invariant_validator_system_prompt,
                     user_prompt_path=inv_prompt_path,
                     max_tokens=512,
                     tools_needed=False,
@@ -560,7 +560,7 @@ class DeepDesignWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=drift_prompt_path,
-                    content=inp.drift_judge_user_prompt or _drift_judge_user_prompt(
+                    content=inp.drift_judge_user_prompt or _drift_judge_user_prompt(  # runtime-dynamic
                         core_claim=state.core_claim,
                         spec_md=state.spec_draft,
                         calibrated=state.core_claim_calibrated,
@@ -574,7 +574,7 @@ class DeepDesignWorkflow:
                 SpawnSubagentInput(
                     role="drift-judge",
                     tier_name="HAIKU",
-                    system_prompt=inp.drift_judge_system_prompt or _drift_judge_system_prompt(),
+                    system_prompt=inp.drift_judge_system_prompt,
                     user_prompt_path=drift_prompt_path,
                     max_tokens=256,
                     tools_needed=False,
@@ -618,7 +618,7 @@ class DeepDesignWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=synth_prompt_path,
-                content=inp.synth_user_prompt or _synth_user_prompt(
+                content=inp.synth_user_prompt or _synth_user_prompt(  # runtime-dynamic
                     concept=inp.concept,
                     spec_md=state.spec_draft,
                     flaws=[vars(f) for f in state.flaws],
@@ -633,7 +633,7 @@ class DeepDesignWorkflow:
             SpawnSubagentInput(
                 role="synth",
                 tier_name="SONNET",
-                system_prompt=inp.synth_system_prompt or _synth_system_prompt(),
+                system_prompt=inp.synth_system_prompt,
                 user_prompt_path=synth_prompt_path,
                 max_tokens=4096,
                 tools_needed=False,
@@ -713,41 +713,6 @@ def _severity_rank(s: str | None) -> int:
 # Prompt templates                                                              #
 # =========================================================================== #
 
-def _draft_system_prompt() -> str:
-    return (
-        "You are a senior software architect. Given a design concept, produce a "
-        "structured technical specification as Markdown. Include: overview, goals, "
-        "non-goals, key components, interfaces/APIs, data model, failure modes, "
-        "and open questions. Be concrete and opinionated.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        "SPEC|<full Markdown spec>\n"
-        "STRUCTURED_OUTPUT_END\n"
-        "IMPORTANT: SPEC value is pipe-separated; put the ENTIRE spec after the first pipe."
-    )
-
-
-def _draft_user_prompt(concept: str) -> str:
-    return (
-        f"Design concept:\n{concept}\n\n"
-        "Produce a complete technical specification. "
-        "Make it specific enough that an engineer could start implementation."
-    )
-
-
-# --- Fact-sheet agent ---
-
-def _fact_sheet_system_prompt() -> str:
-    return (
-        "You are a fact-sheet agent. Read the design spec and identify all "
-        "recovery/error-handling behaviors by component.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        'RECOVERY_BEHAVIORS|[{"component":"<name>","behavior":"<description>"}, ...]\n'
-        "STRUCTURED_OUTPUT_END\n"
-        "Final structured line must be RECOVERY_BEHAVIORS. If none found, emit RECOVERY_BEHAVIORS|[]."
-    )
-
 
 def _fact_sheet_user_prompt(spec_md: str) -> str:
     return (
@@ -757,22 +722,6 @@ def _fact_sheet_user_prompt(spec_md: str) -> str:
         "List all recovery and error-handling behaviors per component."
     )
 
-
-# --- Spec-derived critic ---
-
-def _critic_system_prompt() -> str:
-    return (
-        "You are an adversarial design critic. Find REAL flaws: ambiguities, "
-        "missing failure modes, scalability issues, security gaps, inconsistent "
-        "interfaces, or unjustified assumptions. Be specific.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        'FLAWS|[{"id":"f1","title":"<short label>","severity":"critical|major|minor",'
-        '"dimension":"<category>","scenario":"<concrete trigger>"}, ...]\n'
-        'GAP_REPORTS|[{"references_flaw_id":"<id>","gap_description":"<what fix missed>"}, ...]\n'
-        "STRUCTURED_OUTPUT_END\n"
-        "If no real flaws, emit FLAWS|[]. Do not invent problems."
-    )
 
 
 def _critic_user_prompt(spec_md: str, concept: str, critic_index: int) -> str:
@@ -794,45 +743,6 @@ def _critic_user_prompt(spec_md: str, concept: str, critic_index: int) -> str:
         f"Review focusing on {focus}. Find real flaws only."
     )
 
-
-# --- Outside-frame critic ---
-
-def _outside_frame_system_prompt() -> str:
-    return (
-        "You are an outside-frame critic. Do NOT critique the spec as written. "
-        "Identify what a working implementation of this concept would NEED that "
-        "the spec never mentions. Consider infrastructure, operations, user onboarding, "
-        "failure recovery, dependencies, regulatory/legal requirements.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        'FLAWS|[{"id":"of1","title":"<label>","severity":"critical|major|minor",'
-        '"dimension":"<category>","scenario":"<scenario>"}, ...]\n'
-        'GAP_REPORTS|[]\n'
-        "STRUCTURED_OUTPUT_END"
-    )
-
-
-def _outside_frame_user_prompt(concept: str) -> str:
-    return (
-        f"Original concept description:\n{concept}\n\n"
-        "What would a working implementation NEED that this concept never mentions? "
-        "You are NOT given the current spec. Your value comes from being unconstrained."
-    )
-
-
-# --- Severity judge (pass 1 + pass 2 share the same system prompt) ---
-
-def _judge_system_prompt() -> str:
-    return (
-        "You are an independent severity judge. Your job is to assess whether a "
-        "filed design flaw is valid and correctly classified. You are NOT a rubber-stamp. "
-        "You succeed by REJECTING or DOWNGRADING flaws.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        "VERDICT|critical|major|minor|rejected\n"
-        "STRUCTURED_OUTPUT_END\n"
-        "Pass 2 adds: UPHELD|UPGRADED|DOWNGRADED on a second line inside the block."
-    )
 
 
 def _judge_pass1_user_prompt(flaw: "Flaw", spec_md: str) -> str:
@@ -870,19 +780,6 @@ def _judge_pass2_user_prompt(
     )
 
 
-# --- Challenger agent ---
-
-def _challenger_system_prompt() -> str:
-    return (
-        "You are an independent challenger agent. The redesign agent disputes a "
-        "severity downgrade. Read the flaw, the judge's verdict, and the current spec. "
-        "Render an independent decision.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        "CHALLENGE|CHALLENGE_UPHELD|<rationale> or CHALLENGE_REJECTED|<rationale>\n"
-        "STRUCTURED_OUTPUT_END"
-    )
-
 
 def _challenger_user_prompt(flaw: "Flaw", spec_md: str) -> str:
     return (
@@ -902,19 +799,6 @@ def _challenger_user_prompt(flaw: "Flaw", spec_md: str) -> str:
     )
 
 
-# --- Cross-fix checker ---
-
-def _cross_fix_system_prompt() -> str:
-    return (
-        "You are a cross-fix consistency checker. Given N proposed fixes for "
-        "design flaws, detect conflicts between them and ordering dependencies.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        'CONFLICTS|[{"fix_a":"<id>","fix_b":"<id>","description":"<conflict>"}, ...]\n'
-        "STRUCTURED_OUTPUT_END\n"
-        "If no conflicts, emit CONFLICTS|[]. Unparseable output = assumed conflict."
-    )
-
 
 def _cross_fix_user_prompt(flaws: "list[Flaw]", spec_md: str) -> str:
     flaw_summaries = [
@@ -929,20 +813,6 @@ def _cross_fix_user_prompt(flaws: "list[Flaw]", spec_md: str) -> str:
         "Detect conflicts between proposed fixes. Output CONFLICTS|[...] structured list."
     )
 
-
-# --- Redesign agent ---
-
-def _redesign_system_prompt() -> str:
-    return (
-        "You are a senior software architect revising a technical specification "
-        "based on critic feedback. Address each flaw. Keep what is already good. "
-        "Do NOT weaken any invariant. Do NOT remove CORE_MECHANISM_START/END delimiters.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        "SPEC|<full revised Markdown spec>\n"
-        "COMPONENTS_ADDED|<integer count of new components/fields added>\n"
-        "STRUCTURED_OUTPUT_END"
-    )
 
 
 def _redesign_user_prompt(
@@ -973,20 +843,6 @@ def _redesign_user_prompt(
     )
 
 
-# --- Invariant-validation agent ---
-
-def _invariant_validator_system_prompt() -> str:
-    return (
-        "You are an invariant-validation agent. Validate the revised spec against "
-        "all component invariants. Report violations.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        'VIOLATIONS|[{"key":"<invariant_key>","invariant":"<text>","spec_section":"<section>",'
-        '"evidence":"<quote>"}, ...]\n'
-        "STRUCTURED_OUTPUT_END\n"
-        "If no violations, emit VIOLATIONS|[]. Unparseable output = assumed violation."
-    )
-
 
 def _invariant_validator_user_prompt(spec_md: str, invariants: "list") -> str:
     inv_list = [
@@ -1003,21 +859,6 @@ def _invariant_validator_user_prompt(spec_md: str, invariants: "list") -> str:
     )
 
 
-# --- Drift-judge agent ---
-
-def _drift_judge_system_prompt() -> str:
-    return (
-        "You are a concept-drift judge. Compare the current spec's core mechanism "
-        "against the original core claim. Score semantic similarity 0.0-1.0.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        "DRIFT_SCORE|<float 0.0-1.0>\n"
-        "DRIFT_VERDICT|ok|warning|critical\n"
-        "STRUCTURED_OUTPUT_END\n"
-        "Thresholds: ≥0.80=ok, 0.65-0.80=warning, <0.65=critical. "
-        "If core_claim_calibrated is false, use tighter threshold (0.95 for ok)."
-    )
-
 
 def _drift_judge_user_prompt(
     core_claim: str, spec_md: str, calibrated: bool
@@ -1031,20 +872,6 @@ def _drift_judge_user_prompt(
         "Output DRIFT_SCORE|<float> and DRIFT_VERDICT|ok|warning|critical."
     )
 
-
-# --- Final synthesis ---
-
-def _synth_system_prompt() -> str:
-    return (
-        "You are a technical writer producing the final version of a design spec. "
-        "Given the refined spec and flaws addressed, produce a clean polished spec.md. "
-        "Add a revision summary section listing improvements. "
-        "Include the termination label verbatim in the coverage report.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        "REPORT|<full final Markdown spec>\n"
-        "STRUCTURED_OUTPUT_END"
-    )
 
 
 def _synth_user_prompt(

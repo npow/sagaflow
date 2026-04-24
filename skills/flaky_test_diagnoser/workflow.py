@@ -138,7 +138,7 @@ class FlakyTestWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=hyp_prompt_path,
-                content=inp.hyp_user_prompt or _hyp_user_prompt(inp.test_identifier, run_records, fail_rate),
+                content=inp.hyp_user_prompt or _hyp_user_prompt(inp.test_identifier, run_records, fail_rate),  # runtime-dynamic
             ),
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=HAIKU_POLICY,
@@ -148,7 +148,7 @@ class FlakyTestWorkflow:
             SpawnSubagentInput(
                 role="hypothesis-gen",
                 tier_name="SONNET",
-                system_prompt=inp.hyp_system_prompt or _hyp_system_prompt(),
+                system_prompt=inp.hyp_system_prompt,
                 user_prompt_path=hyp_prompt_path,
                 max_tokens=2048,
                 tools_needed=False,
@@ -163,7 +163,7 @@ class FlakyTestWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=judge_prompt_path,
-                content=inp.judge_user_prompt or _judge_user_prompt(inp.test_identifier, hypotheses, fail_rate),
+                content=inp.judge_user_prompt or _judge_user_prompt(inp.test_identifier, hypotheses, fail_rate),  # runtime-dynamic
             ),
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=HAIKU_POLICY,
@@ -173,7 +173,7 @@ class FlakyTestWorkflow:
             SpawnSubagentInput(
                 role="judge",
                 tier_name="HAIKU",
-                system_prompt=inp.judge_system_prompt or _judge_system_prompt(),
+                system_prompt=inp.judge_system_prompt,
                 user_prompt_path=judge_prompt_path,
                 max_tokens=1024,
                 tools_needed=False,
@@ -188,7 +188,7 @@ class FlakyTestWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=synth_prompt_path,
-                content=inp.synth_user_prompt or _synth_user_prompt(
+                content=inp.synth_user_prompt or _synth_user_prompt(  # runtime-dynamic
                     inp.test_identifier, hypotheses, rankings, run_records, fail_rate, inp.n_runs
                 ),
             ),
@@ -200,7 +200,7 @@ class FlakyTestWorkflow:
             SpawnSubagentInput(
                 role="synth",
                 tier_name="SONNET",
-                system_prompt=inp.synth_system_prompt or _synth_system_prompt(),
+                system_prompt=inp.synth_system_prompt,
                 user_prompt_path=synth_prompt_path,
                 max_tokens=4096,
                 tools_needed=False,
@@ -246,19 +246,6 @@ class FlakyTestWorkflow:
 # ── prompt templates ───────────────────────────────────────────────────────────
 
 
-def _hyp_system_prompt() -> str:
-    return (
-        "You are a flaky-test expert. Given a test identifier, run results, and fail rate, "
-        "generate 3-5 independent hypotheses explaining the flakiness. Use concrete mechanisms. "
-        "Valid categories: ORDERING, TIMING, SHARED_STATE, EXTERNAL_DEPENDENCY, "
-        "RESOURCE_LEAK, NON_DETERMINISM.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        'HYPOTHESES|[{"id":"h1","category":"TIMING","mechanism":"<concrete cause>","uncertainty":"high|medium|low"}, ...]\n'
-        "STRUCTURED_OUTPUT_END\n"
-        "The HYPOTHESES value must be valid JSON. Be specific about the mechanism."
-    )
-
 
 def _hyp_user_prompt(
     test_identifier: str,
@@ -283,18 +270,6 @@ def _hyp_user_prompt(
     )
 
 
-def _judge_system_prompt() -> str:
-    return (
-        "You are a flaky-test diagnosis judge. Given a list of hypotheses and the test's "
-        "fail rate, rank the hypotheses from most to least plausible. Assign ranks 1..N "
-        "(1 = most plausible). Be concise.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        'RANKINGS|[{"hyp_id":"h1","rank":1,"uncertainty":"high|medium|low"}, ...]\n'
-        "STRUCTURED_OUTPUT_END\n"
-        "The RANKINGS value must be valid JSON."
-    )
-
 
 def _judge_user_prompt(
     test_identifier: str,
@@ -309,25 +284,6 @@ def _judge_user_prompt(
         "Consider the fail rate as a clue about timing vs state issues."
     )
 
-
-def _synth_system_prompt() -> str:
-    return (
-        "You are a flaky-test diagnosis synthesizer. Write a concise report.md that: "
-        "(1) states the fail rate and run count, "
-        "(2) lists ranked hypotheses with their plausibility, "
-        "(3) recommends top 1-2 investigation steps, "
-        "(4) assigns a termination label.\n\n"
-        "Valid termination labels: "
-        "root_cause_isolated_with_repro | narrowed_to_N_hypotheses | "
-        "inconclusive_after_N_runs | blocked_by_environment\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        "REPORT|<full markdown report — use literal newlines>\n"
-        "TERMINATION_LABEL|<one of the four labels above>\n"
-        "STRUCTURED_OUTPUT_END\n"
-        "IMPORTANT: REPORT value is pipe-separated; put ALL markdown after the first pipe. "
-        "Do not add extra pipe characters inside the report text."
-    )
 
 
 def _synth_user_prompt(

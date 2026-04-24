@@ -5,22 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 from sagaflow.durable.activities import emit_finding, spawn_subagent, write_artifact
-from sagaflow.prompts import (
-    PromptNotFoundError,
-    load_claude_skill_prompt,
-)
+from sagaflow.prompts import load_claude_skill_prompt
 from sagaflow.registry import SkillRegistry, SkillSpec
 
 from skills.deep_qa.activities import read_text_file
 from skills.deep_qa.workflow import DeepQaInput, DeepQaWorkflow
-
-
-def _load_or_empty(skill: str, name: str, *, substitutions: dict[str, str] | None = None) -> str:
-    """Load a prompt from claude-skills, returning '' if the file hasn't been extracted yet."""
-    try:
-        return load_claude_skill_prompt(skill, name, substitutions=substitutions)
-    except PromptNotFoundError:
-        return ""
 
 
 def _build_input(
@@ -42,16 +31,20 @@ def _build_input(
         run_dir=run_dir,
         max_rounds=max_rounds,
         notify=True,
-        dim_discovery_system_prompt=_load_or_empty("deep-qa", "dim_discovery.system"),
-        dim_discovery_user_prompt=_load_or_empty("deep-qa", "dim_discovery.user"),
-        critic_system_prompt=_load_or_empty("deep-qa", "critic.system"),
-        critic_user_prompt=_load_or_empty("deep-qa", "critic.user"),
-        judge_pass1_system_prompt=_load_or_empty("deep-qa", "judge_pass1.system"),
-        judge_pass2_system_prompt=_load_or_empty("deep-qa", "judge_pass2.system"),
-        auditor_system_prompt=_load_or_empty("deep-qa", "auditor.system"),
-        verifier_system_prompt=_load_or_empty("deep-qa", "verifier.system"),
-        verifier_user_prompt=_load_or_empty("deep-qa", "verifier.user"),
-        synth_system_prompt=_load_or_empty("deep-qa", "synth.system"),
+        dim_discovery_system_prompt=load_claude_skill_prompt("deep-qa", "dim_discovery.system"),
+        dim_discovery_user_prompt=load_claude_skill_prompt("deep-qa", "dim_discovery.user"),
+        critic_system_prompt=load_claude_skill_prompt("deep-qa", "critic.system"),
+        critic_user_prompt=load_claude_skill_prompt("deep-qa", "critic.user"),
+        judge_pass1_system_prompt=load_claude_skill_prompt("deep-qa", "judge_pass1.system"),
+        judge_pass1_user_prompt=load_claude_skill_prompt("deep-qa", "judge_pass1.user"),
+        judge_pass2_system_prompt=load_claude_skill_prompt("deep-qa", "judge_pass2.system"),
+        judge_pass2_user_prompt=load_claude_skill_prompt("deep-qa", "judge_pass2.user"),
+        auditor_system_prompt=load_claude_skill_prompt("deep-qa", "auditor.system"),
+        auditor_user_prompt=load_claude_skill_prompt("deep-qa", "auditor.user"),
+        verifier_system_prompt=load_claude_skill_prompt("deep-qa", "verifier.system"),
+        verifier_user_prompt=load_claude_skill_prompt("deep-qa", "verifier.user"),
+        synth_system_prompt=load_claude_skill_prompt("deep-qa", "synth.system"),
+        synth_user_prompt=load_claude_skill_prompt("deep-qa", "synth.user"),
     )
 
 

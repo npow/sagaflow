@@ -156,14 +156,14 @@ class DeepPlanWorkflow:
                 role="planner",
                 iteration=iteration,
                 run_dir=inp.run_dir,
-                prompt_content=inp.planner_user_prompt or _planner_user_prompt(
+                prompt_content=inp.planner_user_prompt or _planner_user_prompt(  # runtime-dynamic
                     task=inp.task,
                     mode=mode,
                     iteration=iteration,
                     previous_plan=current_plan,
                     feedback=feedback_lines,
                 ),
-                system_prompt=inp.planner_system_prompt or _planner_system_prompt(mode=mode),
+                system_prompt=inp.planner_system_prompt or _planner_system_prompt(mode=mode),  # mode-dependent
                 max_tokens=2048,
                 reg_spawn=_reg_spawn,
                 reg_unparseable=_reg_unparseable,
@@ -181,13 +181,13 @@ class DeepPlanWorkflow:
                 role="architect",
                 iteration=iteration,
                 run_dir=inp.run_dir,
-                prompt_content=inp.architect_user_prompt or _architect_user_prompt(
+                prompt_content=inp.architect_user_prompt or _architect_user_prompt(  # runtime-dynamic
                     task=inp.task,
                     plan=current_plan,
                     criteria=current_criteria,
                     mode=mode,
                 ),
-                system_prompt=inp.architect_system_prompt or _architect_system_prompt(mode=mode),
+                system_prompt=inp.architect_system_prompt or _architect_system_prompt(mode=mode),  # mode-dependent
                 max_tokens=1024,
                 reg_spawn=_reg_spawn,
                 reg_unparseable=_reg_unparseable,
@@ -224,7 +224,7 @@ class DeepPlanWorkflow:
                 role="critic",
                 iteration=iteration,
                 run_dir=inp.run_dir,
-                prompt_content=inp.critic_user_prompt or _critic_user_prompt(
+                prompt_content=inp.critic_user_prompt or _critic_user_prompt(  # runtime-dynamic
                     task=inp.task,
                     plan=current_plan,
                     criteria=current_criteria,
@@ -232,7 +232,7 @@ class DeepPlanWorkflow:
                     architect_concerns=architect_concerns,
                     mode=mode,
                 ),
-                system_prompt=inp.critic_system_prompt or _critic_system_prompt(mode=mode),
+                system_prompt=inp.critic_system_prompt or _critic_system_prompt(mode=mode),  # mode-dependent
                 max_tokens=1024,
                 reg_spawn=_reg_spawn,
                 reg_unparseable=_reg_unparseable,
@@ -327,7 +327,7 @@ class DeepPlanWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=adr_prompt_path,
-                content=inp.adr_user_prompt or _adr_user_prompt(
+                content=inp.adr_user_prompt or _adr_user_prompt(  # runtime-dynamic
                     task=inp.task,
                     plan=current_plan,
                     criteria=current_criteria,
@@ -345,7 +345,7 @@ class DeepPlanWorkflow:
             iteration=0,
             run_dir=inp.run_dir,
             prompt_content=None,  # already written above; use a sentinel
-            system_prompt=inp.adr_system_prompt or _adr_system_prompt(),
+            system_prompt=inp.adr_system_prompt,
             max_tokens=2048,
             reg_spawn=_reg_spawn,
             reg_unparseable=_reg_unparseable,
@@ -733,23 +733,6 @@ def _critic_user_prompt(
         "--- PLAN END ---\n"
     )
 
-
-def _adr_system_prompt() -> str:
-    return (
-        "You are a technical writer specializing in Architecture Decision Records (ADRs). "
-        "Write a concise ADR for the plan.\n\n"
-        "REQUIRED: Quote the Architect and Critic verdict text VERBATIM using these markers:\n"
-        "ARCHITECT_VERDICT_QUOTE|<verbatim architect structured output>\n"
-        "CRITIC_VERDICT_QUOTE|<verbatim critic structured output>\n\n"
-        "If termination label is max_iter_no_consensus, include a Consensus Status section "
-        "listing unresolved critic rejections verbatim.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        "ADR|<full ADR markdown — use literal newlines inside the value>\n"
-        "STRUCTURED_OUTPUT_END\n"
-        "Structure: Title, Status, Context, Decision, Consequences, "
-        "Architect_Verdict_Quote, Critic_Verdict_Quote, Consensus_Status (if no consensus)."
-    )
 
 
 def _adr_user_prompt(

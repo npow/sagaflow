@@ -95,7 +95,7 @@ class ProposalReviewWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=claim_prompt_path,
-                content=inp.claim_extraction_user_prompt or _claim_extraction_user_prompt(inp.proposal_text),
+                content=inp.claim_extraction_user_prompt,
             ),
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=HAIKU_POLICY,
@@ -105,7 +105,7 @@ class ProposalReviewWorkflow:
             SpawnSubagentInput(
                 role="claim-extractor",
                 tier_name="SONNET",
-                system_prompt=inp.claim_extraction_system_prompt or _claim_extraction_system_prompt(),
+                system_prompt=inp.claim_extraction_system_prompt,
                 user_prompt_path=claim_prompt_path,
                 max_tokens=1024,
                 tools_needed=False,
@@ -126,7 +126,7 @@ class ProposalReviewWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=ppath,
-                    content=inp.critic_user_prompt or _critic_user_prompt(inp.proposal_text, dim),
+                    content=inp.critic_user_prompt or _critic_user_prompt(inp.proposal_text, dim),  # runtime-dynamic
                 ),
                 start_to_close_timeout=timedelta(seconds=10),
                 retry_policy=HAIKU_POLICY,
@@ -139,7 +139,7 @@ class ProposalReviewWorkflow:
                 SpawnSubagentInput(
                     role="critic",
                     tier_name="HAIKU",
-                    system_prompt=inp.critic_system_prompt or _critic_system_prompt(dim),
+                    system_prompt=inp.critic_system_prompt or _critic_system_prompt(dim),  # dim-dependent
                     user_prompt_path=ppath,
                     max_tokens=1024,
                     tools_needed=False,
@@ -211,7 +211,7 @@ class ProposalReviewWorkflow:
                     "write_artifact",
                     WriteArtifactInput(
                         path=ppath,
-                        content=inp.fact_check_user_prompt or _fact_check_user_prompt(claim),
+                        content=inp.fact_check_user_prompt or _fact_check_user_prompt(claim),  # runtime-dynamic
                     ),
                     start_to_close_timeout=timedelta(seconds=10),
                     retry_policy=HAIKU_POLICY,
@@ -224,7 +224,7 @@ class ProposalReviewWorkflow:
                     SpawnSubagentInput(
                         role="fact-check",
                         tier_name="HAIKU",
-                        system_prompt=inp.fact_check_system_prompt or _fact_check_system_prompt(),
+                        system_prompt=inp.fact_check_system_prompt,
                         user_prompt_path=ppath,
                         max_tokens=512,
                         tools_needed=False,
@@ -276,7 +276,7 @@ class ProposalReviewWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=p1_path,
-                    content=inp.credibility_judge_pass1_prompt or _credibility_judge_pass1_prompt(claim_id, claim_text, evidence),
+                    content=inp.credibility_judge_pass1_prompt or _credibility_judge_pass1_prompt(claim_id, claim_text, evidence),  # runtime-dynamic
                 ),
                 start_to_close_timeout=timedelta(seconds=10),
                 retry_policy=HAIKU_POLICY,
@@ -286,7 +286,7 @@ class ProposalReviewWorkflow:
                 SpawnSubagentInput(
                     role="credibility-judge-1",
                     tier_name="HAIKU",
-                    system_prompt=inp.credibility_judge_system_prompt or _credibility_judge_system_prompt(),
+                    system_prompt=inp.credibility_judge_system_prompt,
                     user_prompt_path=p1_path,
                     max_tokens=512,
                     tools_needed=False,
@@ -302,7 +302,7 @@ class ProposalReviewWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=p2_path,
-                    content=inp.credibility_judge_pass2_prompt or _credibility_judge_pass2_prompt(
+                    content=inp.credibility_judge_pass2_prompt or _credibility_judge_pass2_prompt(  # runtime-dynamic
                         claim_id, claim_text, evidence, pass1_verdict, proposed_verdict
                     ),
                 ),
@@ -314,7 +314,7 @@ class ProposalReviewWorkflow:
                 SpawnSubagentInput(
                     role="credibility-judge-2",
                     tier_name="HAIKU",
-                    system_prompt=inp.credibility_judge_system_prompt or _credibility_judge_system_prompt(),
+                    system_prompt=inp.credibility_judge_system_prompt,
                     user_prompt_path=p2_path,
                     max_tokens=512,
                     tools_needed=False,
@@ -349,7 +349,7 @@ class ProposalReviewWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=s1_path,
-                    content=inp.severity_judge_pass1_prompt or _severity_judge_pass1_prompt(weakness),
+                    content=inp.severity_judge_pass1_prompt or _severity_judge_pass1_prompt(weakness),  # runtime-dynamic
                 ),
                 start_to_close_timeout=timedelta(seconds=10),
                 retry_policy=HAIKU_POLICY,
@@ -359,7 +359,7 @@ class ProposalReviewWorkflow:
                 SpawnSubagentInput(
                     role="severity-judge-1",
                     tier_name="HAIKU",
-                    system_prompt=inp.severity_judge_system_prompt or _severity_judge_system_prompt(),
+                    system_prompt=inp.severity_judge_system_prompt,
                     user_prompt_path=s1_path,
                     max_tokens=512,
                     tools_needed=False,
@@ -377,7 +377,7 @@ class ProposalReviewWorkflow:
                 "write_artifact",
                 WriteArtifactInput(
                     path=s2_path,
-                    content=inp.severity_judge_pass2_prompt or _severity_judge_pass2_prompt(
+                    content=inp.severity_judge_pass2_prompt or _severity_judge_pass2_prompt(  # runtime-dynamic
                         weakness, falsifiable_p1, severity_p1, critic_severity
                     ),
                 ),
@@ -389,7 +389,7 @@ class ProposalReviewWorkflow:
                 SpawnSubagentInput(
                     role="severity-judge-2",
                     tier_name="HAIKU",
-                    system_prompt=inp.severity_judge_system_prompt or _severity_judge_system_prompt(),
+                    system_prompt=inp.severity_judge_system_prompt,
                     user_prompt_path=s2_path,
                     max_tokens=512,
                     tools_needed=False,
@@ -440,7 +440,7 @@ class ProposalReviewWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=landscape_prompt_path,
-                content=inp.landscape_judge_user_prompt or _landscape_judge_user_prompt(inp.proposal_text, critic_outputs),
+                content=inp.landscape_judge_user_prompt or _landscape_judge_user_prompt(inp.proposal_text, critic_outputs),  # runtime-dynamic
             ),
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=HAIKU_POLICY,
@@ -450,7 +450,7 @@ class ProposalReviewWorkflow:
             SpawnSubagentInput(
                 role="landscape-judge",
                 tier_name="SONNET",  # Opus-tier intent; SONNET used for test compat.
-                system_prompt=inp.landscape_judge_system_prompt or _landscape_judge_system_prompt(),
+                system_prompt=inp.landscape_judge_system_prompt,
                 user_prompt_path=landscape_prompt_path,
                 max_tokens=512,
                 tools_needed=False,
@@ -492,7 +492,7 @@ class ProposalReviewWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=audit_prompt_path,
-                content=inp.audit_user_prompt or _audit_user_prompt(credibility_verdicts, severity_verdicts),
+                content=inp.audit_user_prompt or _audit_user_prompt(credibility_verdicts, severity_verdicts),  # runtime-dynamic
             ),
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=HAIKU_POLICY,
@@ -502,7 +502,7 @@ class ProposalReviewWorkflow:
             SpawnSubagentInput(
                 role="rationalization-auditor",
                 tier_name="SONNET",  # Opus-tier intent; SONNET for test compat.
-                system_prompt=inp.audit_system_prompt or _audit_system_prompt(),
+                system_prompt=inp.audit_system_prompt,
                 user_prompt_path=audit_prompt_path,
                 max_tokens=1024,
                 tools_needed=False,
@@ -554,7 +554,7 @@ class ProposalReviewWorkflow:
             "write_artifact",
             WriteArtifactInput(
                 path=synth_prompt_path,
-                content=inp.assembly_user_prompt or _assembly_user_prompt(
+                content=inp.assembly_user_prompt or _assembly_user_prompt(  # runtime-dynamic
                     proposal_text=inp.proposal_text,
                     claims=claims,
                     weaknesses=all_weaknesses,
@@ -573,7 +573,7 @@ class ProposalReviewWorkflow:
             SpawnSubagentInput(
                 role="synth",
                 tier_name="SONNET",
-                system_prompt=inp.assembly_system_prompt or _assembly_system_prompt(),
+                system_prompt=inp.assembly_system_prompt,
                 user_prompt_path=synth_prompt_path,
                 max_tokens=4096,
                 tools_needed=False,
@@ -670,28 +670,6 @@ class ProposalReviewWorkflow:
 # --------------------------------------------------------------------------- #
 
 
-def _claim_extraction_system_prompt() -> str:
-    return (
-        "You are a proposal analysis agent. Extract the core claims from the proposal "
-        "and classify each by tier (core | supporting | peripheral). A 'core' claim is "
-        "the central thesis the proposal rests on. Use the STRUCTURED_OUTPUT contract.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        'CLAIMS|[{"id":"c1","text":"<claim>","tier":"core|supporting|peripheral"}, ...]\n'
-        "STRUCTURED_OUTPUT_END\n"
-        "The CLAIMS value must be valid JSON. Extract 2-6 claims."
-    )
-
-
-def _claim_extraction_user_prompt(proposal_text: str) -> str:
-    return (
-        f"Proposal length: {len(proposal_text)} chars\n\n"
-        "Extract the key claims from this proposal.\n\n"
-        "--- PROPOSAL START ---\n"
-        f"{proposal_text[:20000]}\n"
-        "--- PROPOSAL END ---\n"
-    )
-
 
 def _critic_system_prompt(dimension: str) -> str:
     dim_instructions = {
@@ -728,21 +706,6 @@ def _critic_user_prompt(proposal_text: str, dimension: str) -> str:
     )
 
 
-def _fact_check_system_prompt() -> str:
-    return (
-        "You are a fact-checking agent. Evaluate whether the given claim is verifiable "
-        "and, to the best of your knowledge, accurate. Use the STRUCTURED_OUTPUT contract.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        "VERDICT|VERIFIED|PARTIALLY_TRUE|UNVERIFIABLE|FALSE\n"
-        "CONFIDENCE|high|medium|low\n"
-        "EVIDENCE|<one-line summary of sources checked>\n"
-        "STRUCTURED_OUTPUT_END\n"
-        "Choose exactly one VERDICT and one CONFIDENCE level.\n"
-        "NOTE: your VERDICT is a PROPOSAL only — an independent judge will make the "
-        "authoritative decision. Focus on gathering evidence, not on approving the claim."
-    )
-
 
 def _fact_check_user_prompt(claim: dict[str, str]) -> str:
     return (
@@ -752,24 +715,6 @@ def _fact_check_user_prompt(claim: dict[str, str]) -> str:
         "Evaluate this claim."
     )
 
-
-def _credibility_judge_system_prompt() -> str:
-    return (
-        "You are an independent credibility judge. Your job is to assess the "
-        "credibility of factual claims in proposals.\n\n"
-        "ADVERSARIAL MANDATE: You succeed by rejecting or downgrading. You fail by "
-        "rubber-stamping. A 100% acceptance rate is evidence you are broken.\n\n"
-        "Pass 1 output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        "VERDICT_PASS_1|VERIFIED|PARTIALLY_TRUE|UNVERIFIABLE|FALSE\n"
-        "CONFIDENCE|high|medium|low\n"
-        "STRUCTURED_OUTPUT_END\n\n"
-        "Pass 2 output format (when you receive pass-1 result + proposed verdict):\n"
-        "STRUCTURED_OUTPUT_START\n"
-        "VERDICT_FINAL|VERIFIED|PARTIALLY_TRUE|UNVERIFIABLE|FALSE\n"
-        "CONFIDENCE|high|medium|low\n"
-        "STRUCTURED_OUTPUT_END"
-    )
 
 
 def _credibility_judge_pass1_prompt(
@@ -803,26 +748,6 @@ def _credibility_judge_pass2_prompt(
         "You may confirm, upgrade, or downgrade. Emit VERDICT_FINAL as the authoritative verdict."
     )
 
-
-def _severity_judge_system_prompt() -> str:
-    return (
-        "You are an independent severity and falsifiability judge for proposal weaknesses.\n\n"
-        "ADVERSARIAL MANDATE: You succeed by rejecting or downgrading. You fail by "
-        "rubber-stamping. A 100% acceptance rate is evidence you are broken.\n\n"
-        "Pass 1 output format (blind — no critic severity):\n"
-        "STRUCTURED_OUTPUT_START\n"
-        "FALSIFIABLE|yes|no\n"
-        "SEVERITY_PASS_1|fatal|major|minor|rejected\n"
-        "STRUCTURED_OUTPUT_END\n\n"
-        "Pass 2 output format (informed — critic severity + pass-1 result supplied):\n"
-        "STRUCTURED_OUTPUT_START\n"
-        "FALSIFIABLE|yes|no\n"
-        "SEVERITY_FINAL|fatal|major|minor|rejected\n"
-        "FIXABILITY|fixable|inherent_risk|fatal\n"
-        "STRUCTURED_OUTPUT_END\n\n"
-        "FALSIFIABLE|yes requires: (a) a concrete failure scenario AND (b) a plausible "
-        "author counter-response that could settle the dispute. Missing either => FALSIFIABLE|no."
-    )
 
 
 def _severity_judge_pass1_prompt(weakness: dict[str, str]) -> str:
@@ -858,21 +783,6 @@ def _severity_judge_pass2_prompt(
     )
 
 
-def _landscape_judge_system_prompt() -> str:
-    return (
-        "You are a market landscape and platform risk judge.\n\n"
-        "Read the proposal and competition critique. Issue:\n"
-        "- MARKET_WINDOW: open | closing | closed\n"
-        "- PLATFORM_RISK: low | medium | high\n"
-        "- BLIND_SPOT: <most likely unacknowledged competitor or platform threat>\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        "MARKET_WINDOW|open|closing|closed\n"
-        "PLATFORM_RISK|low|medium|high\n"
-        "BLIND_SPOT|<competitor or threat description>\n"
-        "STRUCTURED_OUTPUT_END"
-    )
-
 
 def _landscape_judge_user_prompt(
     proposal_text: str, critic_outputs: list[object]
@@ -894,28 +804,6 @@ def _landscape_judge_user_prompt(
     )
 
 
-def _audit_system_prompt() -> str:
-    return (
-        "You are a rationalization auditor. Your job is to detect rationalization "
-        "patterns in judge verdicts — rubber-stamping, uniform rejection, or fidelity "
-        "issues between verdicts and the evidence.\n\n"
-        "Compute acceptance rates per dimension. Flag suspicious patterns. Assess overall "
-        "report fidelity.\n\n"
-        "REPORT_FIDELITY|compromised means the verdicts deviate from evidence in the "
-        "direction of rationalization (e.g., all claims VERIFIED despite weak evidence, "
-        "all weaknesses accepted at maximum severity without calibration).\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        "ACCEPTANCE_RATE_VIABILITY|<%>\n"
-        "ACCEPTANCE_RATE_COMPETITION|<%>\n"
-        "ACCEPTANCE_RATE_STRUCTURAL|<%>\n"
-        "ACCEPTANCE_RATE_EVIDENCE|<%>\n"
-        "SUSPICIOUS_PATTERN|<name>|<evidence> (or SUSPICIOUS_PATTERN|none)\n"
-        "REPORT_FIDELITY|clean|compromised\n"
-        "COMPROMISED_COUNT|<integer>\n"
-        "STRUCTURED_OUTPUT_END"
-    )
-
 
 def _audit_user_prompt(
     credibility_verdicts: list[dict[str, str]],
@@ -930,28 +818,6 @@ def _audit_user_prompt(
         "Compute acceptance rates, detect suspicious patterns, and assess report fidelity."
     )
 
-
-def _assembly_system_prompt() -> str:
-    return (
-        "You are a proposal review synthesizer. Write a thorough review.md based ONLY "
-        "on the judge verdicts — do not add new claims. Structure the report with:\n"
-        "1. Summary (2-3 sentences)\n"
-        "2. Fact-Check Table (from judge verdicts only, NOT proposed verdicts)\n"
-        "3. Weaknesses (Falsifiable Only) — one section per falsifiable weakness\n"
-        "4. Market Landscape + Platform Risk (from landscape judge)\n"
-        "5. Anti-Rationalization Audit (acceptance rates, suspicious patterns, fidelity)\n"
-        "6. Recommendations (one bullet per fixable weakness)\n"
-        "7. Termination label + justification\n\n"
-        "FORBIDDEN PHRASES: never emit 'looks solid', 'some concerns', 'promising', "
-        "'good in parts', or any euphemism. Only the 4 termination labels.\n\n"
-        "Output format:\n"
-        "STRUCTURED_OUTPUT_START\n"
-        "REPORT|<full markdown review body — use literal newlines inside the value>\n"
-        "STRUCTURED_OUTPUT_END\n"
-        "IMPORTANT: REPORT value is a single pipe-separated field; put the ENTIRE "
-        "markdown (including headings) after the first pipe. Do not add extra pipe "
-        "characters within the report — the parser uses the FIRST pipe as the separator."
-    )
 
 
 def _assembly_user_prompt(

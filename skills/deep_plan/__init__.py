@@ -5,25 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from sagaflow.durable.activities import emit_finding, spawn_subagent, write_artifact
-from sagaflow.prompts import (
-    PromptNotFoundError,
-    load_claude_skill_prompt,
-)
+from sagaflow.prompts import load_claude_skill_prompt
 from sagaflow.registry import SkillRegistry, SkillSpec
 
 from skills.deep_plan.workflow import DeepPlanInput, DeepPlanWorkflow
-
-
-def _load_or_empty(skill: str, name: str, *, substitutions: dict[str, str] | None = None) -> str:
-    """Load a prompt from claude-skills, returning '' if the file hasn't been extracted yet.
-
-    Lets us migrate prompts skill-by-skill: as each prompt .md file lands in claude-skills,
-    the workflow picks it up; absent files mean the workflow falls back to its inline default.
-    """
-    try:
-        return load_claude_skill_prompt(skill, name, substitutions=substitutions)
-    except PromptNotFoundError:
-        return ""
 
 
 def _build_input(
@@ -48,14 +33,14 @@ def _build_input(
         inbox_path=inbox_path,
         max_iter=max_iter,
         notify=True,
-        planner_system_prompt=_load_or_empty("deep-plan", "planner.system"),
-        planner_user_prompt=_load_or_empty("deep-plan", "planner.user"),
-        architect_system_prompt=_load_or_empty("deep-plan", "architect.system"),
-        architect_user_prompt=_load_or_empty("deep-plan", "architect.user"),
-        critic_system_prompt=_load_or_empty("deep-plan", "critic.system"),
-        critic_user_prompt=_load_or_empty("deep-plan", "critic.user"),
-        adr_system_prompt=_load_or_empty("deep-plan", "adr.system"),
-        adr_user_prompt=_load_or_empty("deep-plan", "adr.user"),
+        planner_system_prompt=load_claude_skill_prompt("deep-plan", "planner.system"),
+        planner_user_prompt=load_claude_skill_prompt("deep-plan", "planner.user"),
+        architect_system_prompt=load_claude_skill_prompt("deep-plan", "architect.system"),
+        architect_user_prompt=load_claude_skill_prompt("deep-plan", "architect.user"),
+        critic_system_prompt=load_claude_skill_prompt("deep-plan", "critic.system"),
+        critic_user_prompt=load_claude_skill_prompt("deep-plan", "critic.user"),
+        adr_system_prompt=load_claude_skill_prompt("deep-plan", "adr.system"),
+        adr_user_prompt=load_claude_skill_prompt("deep-plan", "adr.user"),
     )
 
 
