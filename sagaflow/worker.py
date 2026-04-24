@@ -158,16 +158,23 @@ def build_registry() -> SkillRegistry:
                 except Exception:  # noqa: BLE001
                     _log.debug("failed to register legacy aliases for %s", skill_dir.name, exc_info=True)
 
-        # Phase 2: load and register each skill.
+        # Phase 2: register each skill from the already-loaded legacy module
+        # (preferred) or by loading under a `skills.<name>` module name so the
+        # Temporal sandbox can resolve it via the passthrough.
         for skill_dir in sorted(skills_root.iterdir()):
             if not skill_dir.is_dir():
                 continue
             init_py = skill_dir / "__init__.py"
             if not init_py.exists():
                 continue
-            mod_name = f"claude_skill_{skill_dir.name.replace('-', '_')}"
-            try:
+            legacy = _DIR_TO_LEGACY.get(skill_dir.name)
+            mod = None
+            if legacy:
+                mod = sys.modules.get(f"skills.{legacy}")
+            if mod is None:
+                mod_name = f"skills.{legacy}" if legacy else f"claude_skill_{skill_dir.name.replace('-', '_')}"
                 mod = _load_skill_module(skill_dir, mod_name)
+            try:
                 if mod and hasattr(mod, "register"):
                     mod.register(registry)
             except Exception:  # noqa: BLE001
@@ -342,7 +349,17 @@ async def run_worker(*, target: str = DEFAULT_TARGET) -> None:
             continue
         seen.add(id(extra))
         workflows.append(extra)
-    all_activities = list(registry.all_activities()) + build_mission_activities()
+    # Dedupe activities by Temporal name — skills and missions share some
+    # (emit_finding, spawn_subagent, etc.) and Temporal rejects duplicates.
+    combined = list(registry.all_activities()) + build_mission_activities()
+    seen_act: set[str] = set()
+    all_activities: list = []
+    for act in combined:
+        defn = getattr(act, "__temporal_activity_definition", None)
+        key = defn.name if defn is not None else f"fn:{id(act)}"
+        if key not in seen_act:
+            seen_act.add(key)
+            all_activities.append(act)
     worker = Worker(
         client,
         task_queue=TASK_QUEUE,
