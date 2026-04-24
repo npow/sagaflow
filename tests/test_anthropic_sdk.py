@@ -1,22 +1,29 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from sagaflow.transport.anthropic_sdk import AnthropicSdkTransport, ModelTier
 
 
+def _make_stream_context(text="hello back", input_tokens=5, output_tokens=2):
+    final_message = SimpleNamespace(
+        content=[SimpleNamespace(type="text", text=text)],
+        usage=SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens),
+    )
+    ctx = AsyncMock()
+    ctx.__aenter__ = AsyncMock(return_value=ctx)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+    ctx.get_final_message = AsyncMock(return_value=final_message)
+    return ctx
+
+
 @pytest.fixture
 def mock_anthropic_client(monkeypatch):
+    stream_ctx = _make_stream_context()
+    stream_fn = MagicMock(return_value=stream_ctx)
     fake = SimpleNamespace(
-        messages=SimpleNamespace(
-            create=AsyncMock(
-                return_value=SimpleNamespace(
-                    content=[SimpleNamespace(type="text", text="hello back")],
-                    usage=SimpleNamespace(input_tokens=5, output_tokens=2),
-                )
-            )
-        )
+        messages=SimpleNamespace(stream=stream_fn)
     )
     return fake
 
@@ -42,7 +49,7 @@ async def test_call_forwards_model_id_for_tier(mock_anthropic_client) -> None:
         user_prompt="u",
         max_tokens=32,
     )
-    call_args = mock_anthropic_client.messages.create.call_args.kwargs
+    call_args = mock_anthropic_client.messages.stream.call_args.kwargs
     assert call_args["model"] == "claude-sonnet-4-6"
     assert call_args["max_tokens"] == 32
 

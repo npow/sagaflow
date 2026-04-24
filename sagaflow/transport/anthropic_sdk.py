@@ -44,12 +44,13 @@ class AnthropicSdkTransport:
         user_prompt: str,
         max_tokens: int,
     ) -> TransportResult:
-        response = await self._client.messages.create(
+        async with self._client.messages.stream(
             model=tier.model_id,
             max_tokens=max_tokens,
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
-        )
+        ) as stream:
+            response = await stream.get_final_message()
         text_parts = [block.text for block in response.content if block.type == "text"]
         return TransportResult(
             text="".join(text_parts),
