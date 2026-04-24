@@ -8,6 +8,8 @@ import logging
 import os
 import subprocess
 import sys
+import types
+from pathlib import Path
 
 from temporalio.api.taskqueue.v1 import TaskQueue
 from temporalio.api.workflowservice.v1 import DescribeTaskQueueRequest

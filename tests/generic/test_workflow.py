@@ -37,7 +37,6 @@ from sagaflow.generic.activities import (
 from sagaflow.generic.workflow import (
     ClaudeSkillInput,
     ClaudeSkillWorkflow,
-    SubagentInput,
     SubagentWorkflow,
 )
 from sagaflow.temporal_client import TASK_QUEUE
@@ -363,7 +362,7 @@ async def test_workflow_max_iterations_cap(tmp_path) -> None:
 async def test_subagent_child_workflow_round_trip(tmp_path) -> None:
     """Parent dispatches SubagentWorkflow via spawn_subagent; child returns text to parent."""
 
-    run_dir = tmp_path / "runs" / "gen-1"
+    tmp_path / "runs" / "gen-1"
 
     # Two scripted response lists: one for each workflow_id. We key off the
     # system prompt (parent's contains "SKILL.md", child's contains "subagent")

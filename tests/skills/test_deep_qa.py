@@ -461,7 +461,7 @@ async def test_report_has_real_content_from_synth(tmp_path) -> None:
     artifact = tmp_path / "artifact.txt"
     artifact.write_text("Hello world.\nThis is the artifact under QA.\n")
 
-    result = await _run_workflow(
+    await _run_workflow(
         tmp_path,
         _fake_basic,
         DeepQaInput(
@@ -535,7 +535,7 @@ async def test_malformed_synth_falls_back_to_draft(tmp_path) -> None:
     artifact = tmp_path / "artifact.txt"
     artifact.write_text("def foo(): pass\n")
 
-    result = await _run_workflow(
+    await _run_workflow(
         tmp_path,
         _fake_malformed_synth,
         DeepQaInput(

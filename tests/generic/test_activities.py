@@ -7,7 +7,6 @@ is what's exercised. Paths use the pytest ``tmp_path`` fixture for isolation.
 from __future__ import annotations
 
 import os
-import sys
 from unittest.mock import patch
 
 import pytest
