@@ -23,11 +23,27 @@ class ClaudeCliTransport:
     def __init__(self, command: str = "claude") -> None:
         self._command = command
 
-    async def call(self, *, prompt: str, timeout_seconds: float) -> ClaudeCliResult:
+    async def call(
+        self,
+        *,
+        prompt: str,
+        timeout_seconds: float,
+        model: str | None = None,
+        allowed_tools: list[str] | None = None,
+        permission_mode: str | None = None,
+        dangerously_skip_permissions: bool = False,
+    ) -> ClaudeCliResult:
+        args = [self._command, "-p", prompt]
+        if model:
+            args.extend(["--model", model])
+        if dangerously_skip_permissions:
+            args.append("--dangerously-skip-permissions")
+        elif permission_mode:
+            args.extend(["--permission-mode", permission_mode])
+        if allowed_tools:
+            args.extend(["--allowedTools", *allowed_tools])
         process = await asyncio.create_subprocess_exec(
-            self._command,
-            "-p",
-            prompt,
+            *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

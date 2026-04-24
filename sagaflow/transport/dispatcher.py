@@ -19,6 +19,13 @@ class SubagentRequest:
     cli_timeout_seconds: float = 3600.0
 
 
+_TIER_TO_MODEL_ALIAS: dict[str, str] = {
+    "HAIKU": "haiku",
+    "SONNET": "sonnet",
+    "OPUS": "opus",
+}
+
+
 async def dispatch_subagent(
     request: SubagentRequest,
     *,
@@ -27,9 +34,12 @@ async def dispatch_subagent(
 ) -> str:
     if request.tools_needed:
         combined_prompt = f"{request.system_prompt}\n\n---\n\n{request.user_prompt}"
+        model_alias = _TIER_TO_MODEL_ALIAS.get(request.tier.name, "opus")
         result = await cli_transport.call(
             prompt=combined_prompt,
             timeout_seconds=request.cli_timeout_seconds,
+            model=model_alias,
+            dangerously_skip_permissions=True,
         )
         return result.stdout
 

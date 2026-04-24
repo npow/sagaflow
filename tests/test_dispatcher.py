@@ -59,3 +59,21 @@ async def test_dispatch_uses_cli_when_tools_needed(fake_sdk, fake_cli) -> None:
     assert result == "cli output"
     fake_cli.call.assert_awaited_once()
     fake_sdk.call.assert_not_awaited()
+
+
+async def test_dispatch_passes_model_and_permissions_to_cli(fake_sdk, fake_cli) -> None:
+    await dispatch_subagent(
+        SubagentRequest(
+            role="researcher",
+            tier=ModelTier.SONNET,
+            system_prompt="sys",
+            user_prompt="user",
+            max_tokens=256,
+            tools_needed=True,
+        ),
+        sdk_transport=fake_sdk,
+        cli_transport=fake_cli,
+    )
+    call_kwargs = fake_cli.call.call_args.kwargs
+    assert call_kwargs["model"] == "sonnet"
+    assert call_kwargs["dangerously_skip_permissions"] is True
