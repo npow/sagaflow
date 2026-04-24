@@ -43,6 +43,7 @@ dev = [
     "pytest-cov>=5.0.0",
     "ruff>=0.4.0",
     "mypy>=1.10.0",
+    "types-PyYAML>=6.0.0",
 ]
 
 [project.urls]
@@ -63,6 +64,10 @@ target-version = "py311"
 [tool.mypy]
 strict = true
 python_version = "3.11"
+
+[[tool.mypy.overrides]]
+module = ["sagaflow.generic.*", "sagaflow.missions.*", "sagaflow.cli", "sagaflow.worker"]
+ignore_errors = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

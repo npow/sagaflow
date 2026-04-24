@@ -24,7 +24,7 @@ def _preflight_all() -> None:
     _a.run(preflight())
 
 
-def _resolve_skill(registry, skill: str, args: dict):  # type: ignore[type-arg]
+def _resolve_skill(registry, skill: str, args: dict):  # type: ignore[type-arg]  # type: ignore[type-arg]
     """Return the SkillSpec for ``skill``, falling back to the generic interpreter.
 
     Mutates ``args`` in-place: when the fallback fires, sets ``_target_skill`` so

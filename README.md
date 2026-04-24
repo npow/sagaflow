@@ -91,9 +91,33 @@ worker daemon polls task queue "sagaflow"
 
 If the worker crashes mid-run, the next `sagaflow launch` auto-spawns a fresh one and Temporal resumes from the last completed activity.
 
-## Built-in skills
+## Generic interpreter
 
-sagaflow ships with 11 skills. Each is a Python package under `skills/` that plugs into the runtime via `register(registry)`:
+Any claude-skill with a `SKILL.md` is automatically Temporal-runnable — no Python needed:
+
+```bash
+sagaflow launch my-new-skill --arg topic='something' --await
+```
+
+sagaflow reads the SKILL.md, runs Claude in a tool-use loop where each tool call is a distinct Temporal activity, and writes the result to `~/.sagaflow/runs/<id>/`. If the worker crashes mid-run, Temporal resumes from the last completed activity.
+
+For skills that benefit from explicit parallelism (fan-out critics, independent judges), add a `workflow.py` alongside the SKILL.md in claude-skills. sagaflow discovers it at runtime.
+
+## Mission mode (ex-swarmd)
+
+Run a claude agent against success criteria with tamper detection, anti-cheat, and progress monitoring:
+
+```bash
+sagaflow mission launch mission.yaml
+sagaflow mission status <workflow-id>
+sagaflow mission abort <workflow-id>
+```
+
+See `docs/specs/` for mission.yaml format and observer details.
+
+## Skills
+
+Skills live in the [claude-skills](https://github.com/npow/claude-skills) repo (`~/.claude/skills/`). sagaflow discovers them dynamically at worker startup — zero skill-specific imports in sagaflow. 11 skills have bespoke Temporal workflows:
 
 | Skill | What it does |
 |---|---|
@@ -113,17 +137,20 @@ All skills use the same transport layer (Anthropic SDK or `claude -p` subprocess
 
 ## Writing a new skill
 
-See [`docs/SKILL-TEMPLATE.md`](docs/SKILL-TEMPLATE.md). The minimal skill is `skills/hello_world/` (~100 lines), which exercises every framework surface without importing anything skill-specific from the framework core.
+**Simple skill (no Python):** Add `~/.claude/skills/my-skill/SKILL.md`. Done — the generic interpreter handles it.
+
+**Bespoke skill (with parallelism):** Add `__init__.py` + `workflow.py` alongside SKILL.md. The workflow imports sagaflow types (`SpawnSubagentInput`, `WriteArtifactInput`, retry policies) and is discovered dynamically. See `~/.claude/skills/hello-world-temporal/` for the minimal example.
 
 ## Development
 
 ```bash
 git clone https://github.com/npow/sagaflow
+git clone https://github.com/npow/claude-skills ~/.claude/skills  # or your existing checkout
 cd sagaflow
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-ruff check sagaflow tests skills
+ruff check sagaflow tests
 mypy sagaflow
 pytest
 
