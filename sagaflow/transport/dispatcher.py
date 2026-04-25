@@ -16,6 +16,7 @@ class SubagentRequest:
     user_prompt: str
     max_tokens: int
     tools_needed: bool
+    label: str = ""
     cli_timeout_seconds: float = 3600.0
 
 
@@ -39,6 +40,7 @@ async def dispatch_subagent(
             prompt=combined_prompt,
             timeout_seconds=request.cli_timeout_seconds,
             model=model_alias,
+            label=request.label,
             dangerously_skip_permissions=True,
         )
         return result.stdout

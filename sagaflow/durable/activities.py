@@ -113,6 +113,7 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
     tier = ModelTier[inp.tier_name]
     sdk = _get_sdk()
     cli = _get_cli()
+    label = f"{inp.role}:{prompt_path.stem}"
     request = SubagentRequest(
         role=inp.role,
         tier=tier,
@@ -120,6 +121,7 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
         user_prompt=user_prompt,
         max_tokens=inp.max_tokens,
         tools_needed=inp.tools_needed,
+        label=label,
     )
 
     beat_task: asyncio.Task[None] | None = None
