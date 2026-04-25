@@ -66,11 +66,11 @@ class ClaudeCliTransport:
         stderr = stderr_bytes.decode("utf-8", errors="replace")
         if process.returncode != 0:
             if stdout.strip() and "Hook cancelled" in stderr:
-                return ClaudeCliResult(stdout=stdout, stderr=stderr, exit_code=process.returncode)
+                return ClaudeCliResult(stdout=stdout, stderr=stderr, exit_code=process.returncode or 1)
             raise ClaudeCliError(
                 f"`{self._command} -p` exited with exit code {process.returncode}: {stderr.strip()}"
             )
-        return ClaudeCliResult(stdout=stdout, stderr=stderr, exit_code=process.returncode)
+        return ClaudeCliResult(stdout=stdout, stderr=stderr, exit_code=process.returncode or 0)
 
 
 async def _terminate(process: asyncio.subprocess.Process) -> None:
