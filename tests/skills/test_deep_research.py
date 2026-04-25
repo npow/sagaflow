@@ -496,7 +496,7 @@ async def test_year_range_in_novelty_sources_no_crash(tmp_path) -> None:
             activities=[write_artifact, emit_finding, _fake_bad_year],
             workflow_runner=_SANDBOX,
         ):
-            result = await env.client.execute_workflow(
+            await env.client.execute_workflow(
                 DeepResearchWorkflow.run,
                 DeepResearchInput(
                     run_id="dr-bad-year",
@@ -536,7 +536,7 @@ async def test_sub_direction_generation_replenishes_frontier(tmp_path) -> None:
             activities=[write_artifact, emit_finding, _fake_with_expansion],
             workflow_runner=_SANDBOX,
         ):
-            result = await env.client.execute_workflow(
+            await env.client.execute_workflow(
                 DeepResearchWorkflow.run,
                 DeepResearchInput(
                     run_id="dr-expand",
@@ -574,7 +574,7 @@ async def test_malformed_direction_json_no_crash(tmp_path) -> None:
             activities=[write_artifact, emit_finding, _fake_bad_json],
             workflow_runner=_SANDBOX,
         ):
-            result = await env.client.execute_workflow(
+            await env.client.execute_workflow(
                 DeepResearchWorkflow.run,
                 DeepResearchInput(
                     run_id="dr-badjson",
