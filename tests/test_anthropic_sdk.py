@@ -5,7 +5,7 @@ import anthropic
 import httpx
 import pytest
 
-from sagaflow.transport.anthropic_sdk import AnthropicSdkTransport, ModelTier, _MAX_RETRIES
+from sagaflow.transport.anthropic_sdk import AnthropicSdkTransport, ModelTier, _MAX_DELAY_S
 
 
 def _make_stream_context(text="hello back", input_tokens=5, output_tokens=2):
@@ -96,17 +96,55 @@ async def test_retries_on_overloaded_then_succeeds(mock_sleep) -> None:
 
 
 @patch("sagaflow.transport.anthropic_sdk.asyncio.sleep", new_callable=AsyncMock)
-async def test_raises_after_max_retries_exhausted(mock_sleep) -> None:
+async def test_retries_indefinitely_for_529_until_success(mock_sleep) -> None:
+    """529 retries have no count ceiling — they keep going until the API recovers."""
+    success_ctx = _make_stream_context(text="finally")
     fail_error = _make_api_status_error(529)
-    client = SimpleNamespace(
-        messages=SimpleNamespace(stream=MagicMock(side_effect=fail_error))
-    )
+    failures_before_success = 20
+
+    call_count = 0
+
+    def stream_side_effect(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count <= failures_before_success:
+            raise fail_error
+        return success_ctx
+
+    client = SimpleNamespace(messages=SimpleNamespace(stream=MagicMock(side_effect=stream_side_effect)))
     transport = AnthropicSdkTransport(client=client)
-    with pytest.raises(anthropic.APIStatusError):
-        await transport.call(
-            tier=ModelTier.HAIKU, system_prompt="s", user_prompt="u", max_tokens=16,
-        )
-    assert client.messages.stream.call_count == _MAX_RETRIES + 1
+    result = await transport.call(
+        tier=ModelTier.HAIKU, system_prompt="s", user_prompt="u", max_tokens=16,
+    )
+    assert result.text == "finally"
+    assert call_count == failures_before_success + 1
+    assert mock_sleep.call_count == failures_before_success
+
+
+@patch("sagaflow.transport.anthropic_sdk.asyncio.sleep", new_callable=AsyncMock)
+async def test_backoff_caps_at_max_delay(mock_sleep) -> None:
+    """Exponential backoff should cap at _MAX_DELAY_S, not grow unbounded."""
+    success_ctx = _make_stream_context(text="ok")
+    fail_error = _make_api_status_error(529)
+    num_failures = 15  # enough to hit the cap
+
+    call_count = 0
+
+    def stream_side_effect(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count <= num_failures:
+            raise fail_error
+        return success_ctx
+
+    client = SimpleNamespace(messages=SimpleNamespace(stream=MagicMock(side_effect=stream_side_effect)))
+    transport = AnthropicSdkTransport(client=client)
+    await transport.call(
+        tier=ModelTier.HAIKU, system_prompt="s", user_prompt="u", max_tokens=16,
+    )
+    delays = [c.args[0] for c in mock_sleep.call_args_list]
+    assert all(d <= _MAX_DELAY_S for d in delays), f"delay exceeded cap: {delays}"
+    assert delays[-1] == _MAX_DELAY_S, f"last delay should be capped: {delays[-1]}"
 
 
 async def test_non_retryable_error_raises_immediately() -> None:
@@ -120,3 +158,28 @@ async def test_non_retryable_error_raises_immediately() -> None:
             tier=ModelTier.HAIKU, system_prompt="s", user_prompt="u", max_tokens=16,
         )
     assert client.messages.stream.call_count == 1
+
+
+@patch("sagaflow.transport.anthropic_sdk.asyncio.sleep", new_callable=AsyncMock)
+async def test_all_retryable_status_codes_are_retried(mock_sleep) -> None:
+    """429, 500, 502, 503, 529 should all trigger retry."""
+    for code in (429, 500, 502, 503, 529):
+        success_ctx = _make_stream_context(text="ok")
+        fail_error = _make_api_status_error(code)
+        call_count = 0
+
+        def stream_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 1:
+                raise fail_error
+            return success_ctx
+
+        client = SimpleNamespace(messages=SimpleNamespace(stream=MagicMock(side_effect=stream_side_effect)))
+        transport = AnthropicSdkTransport(client=client)
+        result = await transport.call(
+            tier=ModelTier.HAIKU, system_prompt="s", user_prompt="u", max_tokens=16,
+        )
+        assert result.text == "ok", f"status {code} should have been retried"
+        assert call_count == 2, f"status {code}: expected 2 calls, got {call_count}"
+        mock_sleep.reset_mock()
