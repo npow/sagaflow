@@ -602,17 +602,17 @@ class MissionWorkflow:
             "workspace": mission.workspace,
             "mission_id": workflow.info().workflow_id,
         }
-        # Short timeout + single attempt: `spawn_subagent` is a fire-and-forget
-        # Popen — it's either fast (healthy path) or fails for a reason
-        # (missing CLI, bad workspace) that retrying won't fix. Long waits
-        # would block the workflow from entering the verifier loop and
-        # answering queries.
+        # SDK transport makes the API call inline (not Popen), so the activity
+        # can run for minutes if the API is overloaded (529). Give it generous
+        # timeout + heartbeat so the transport's retry loop can work. The
+        # heartbeat loop in the activity keeps Temporal from killing it.
         try:
             result = await workflow.execute_activity(
                 "spawn_subagent",
                 request,
-                start_to_close_timeout=timedelta(seconds=10),
-                retry_policy=retry_policies._policy(initial_s=1, max_s=2, attempts=1),
+                start_to_close_timeout=timedelta(hours=1),
+                heartbeat_timeout=timedelta(seconds=90),
+                retry_policy=retry_policies.SONNET_POLICY,
             )
         except Exception as exc:  # noqa: BLE001
             # Spawn failure is non-fatal: the verifier loop + observers can

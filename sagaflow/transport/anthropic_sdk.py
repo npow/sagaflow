@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from dataclasses import dataclass
 from enum import Enum
 
@@ -14,8 +15,8 @@ from anthropic import AsyncAnthropic
 logger = logging.getLogger(__name__)
 
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 529}
-_MAX_RETRIES = 6
 _BASE_DELAY_S = 3.0
+_MAX_DELAY_S = 120.0  # cap between retries; total ceiling governed by Temporal activity timeout
 
 
 class ModelTier(Enum):
@@ -53,8 +54,9 @@ class AnthropicSdkTransport:
         user_prompt: str,
         max_tokens: int,
     ) -> TransportResult:
-        last_exc: anthropic.APIStatusError | None = None
-        for attempt in range(_MAX_RETRIES + 1):
+        started = time.monotonic()
+        attempt = 0
+        while True:
             try:
                 async with self._client.messages.stream(
                     model=tier.model_id,
@@ -72,17 +74,16 @@ class AnthropicSdkTransport:
                     output_tokens=response.usage.output_tokens,
                 )
             except anthropic.APIStatusError as exc:
-                if exc.status_code not in _RETRYABLE_STATUS_CODES or attempt == _MAX_RETRIES:
+                if exc.status_code not in _RETRYABLE_STATUS_CODES:
                     raise
-                last_exc = exc
-                delay = _BASE_DELAY_S * (2 ** attempt)
+                delay = min(_BASE_DELAY_S * (2 ** attempt), _MAX_DELAY_S)
+                elapsed = time.monotonic() - started
                 logger.warning(
-                    "Anthropic API %d (attempt %d/%d), retrying in %.0fs",
+                    "Anthropic API %d (attempt %d, %.0fs elapsed), retrying in %.0fs",
                     exc.status_code,
                     attempt + 1,
-                    _MAX_RETRIES + 1,
+                    elapsed,
                     delay,
                 )
                 await asyncio.sleep(delay)
-        assert last_exc is not None  # unreachable; satisfies type checker
-        raise last_exc
+                attempt += 1
