@@ -16,25 +16,25 @@ NON_RETRYABLE_ERRORS: list[str] = [
 
 
 HAIKU_POLICY = RetryPolicy(
-    initial_interval=timedelta(seconds=5),
+    initial_interval=timedelta(seconds=10),
     backoff_coefficient=2.0,
-    maximum_interval=timedelta(seconds=30),
-    maximum_attempts=2,
+    maximum_interval=timedelta(seconds=60),
+    maximum_attempts=4,
     non_retryable_error_types=NON_RETRYABLE_ERRORS,
 )
 
 SONNET_POLICY = RetryPolicy(
-    initial_interval=timedelta(seconds=5),
+    initial_interval=timedelta(seconds=10),
     backoff_coefficient=2.0,
-    maximum_interval=timedelta(seconds=30),
-    maximum_attempts=2,
+    maximum_interval=timedelta(seconds=60),
+    maximum_attempts=4,
     non_retryable_error_types=NON_RETRYABLE_ERRORS,
 )
 
 CLI_POLICY = RetryPolicy(
-    initial_interval=timedelta(seconds=10),
+    initial_interval=timedelta(seconds=15),
     backoff_coefficient=2.0,
-    maximum_interval=timedelta(seconds=60),
-    maximum_attempts=2,
+    maximum_interval=timedelta(seconds=120),
+    maximum_attempts=4,
     non_retryable_error_types=NON_RETRYABLE_ERRORS,
 )

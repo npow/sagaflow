@@ -14,8 +14,8 @@ from anthropic import AsyncAnthropic
 logger = logging.getLogger(__name__)
 
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 529}
-_MAX_RETRIES = 4
-_BASE_DELAY_S = 2.0
+_MAX_RETRIES = 6
+_BASE_DELAY_S = 3.0
 
 
 class ModelTier(Enum):
