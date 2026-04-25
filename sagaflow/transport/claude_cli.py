@@ -29,11 +29,14 @@ class ClaudeCliTransport:
         prompt: str,
         timeout_seconds: float,
         model: str | None = None,
+        label: str = "",
         allowed_tools: list[str] | None = None,
         permission_mode: str | None = None,
         dangerously_skip_permissions: bool = False,
     ) -> ClaudeCliResult:
         args = [self._command, "-p"]
+        if label:
+            args.extend(["--append-system-prompt", f"[sagaflow:{label}]"])
         if model:
             args.extend(["--model", model])
         if dangerously_skip_permissions:
