@@ -33,7 +33,7 @@ class ClaudeCliTransport:
         permission_mode: str | None = None,
         dangerously_skip_permissions: bool = False,
     ) -> ClaudeCliResult:
-        args = [self._command, "-p", prompt]
+        args = [self._command, "-p"]
         if model:
             args.extend(["--model", model])
         if dangerously_skip_permissions:
@@ -44,12 +44,14 @@ class ClaudeCliTransport:
             args.extend(["--allowedTools", *allowed_tools])
         process = await asyncio.create_subprocess_exec(
             *args,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                process.communicate(), timeout=timeout_seconds
+                process.communicate(input=prompt.encode("utf-8")),
+                timeout=timeout_seconds,
             )
         except asyncio.TimeoutError as exc:
             await _terminate(process)
@@ -60,6 +62,8 @@ class ClaudeCliTransport:
         stdout = stdout_bytes.decode("utf-8", errors="replace")
         stderr = stderr_bytes.decode("utf-8", errors="replace")
         if process.returncode != 0:
+            if stdout.strip() and "Hook cancelled" in stderr:
+                return ClaudeCliResult(stdout=stdout, stderr=stderr, exit_code=process.returncode)
             raise ClaudeCliError(
                 f"`{self._command} -p` exited with exit code {process.returncode}: {stderr.strip()}"
             )

@@ -589,3 +589,126 @@ async def test_malformed_direction_json_no_crash(tmp_path) -> None:
             )
     # Should produce a report even with 0 directions (fallback path).
     assert (tmp_path / "run" / "research-report.md").exists()
+
+
+async def test_partial_researcher_failure_still_writes_successful_findings(tmp_path) -> None:
+    """When one researcher raises, the others' findings files must still be written."""
+
+    @activity.defn(name="spawn_subagent")
+    async def _fake_one_fails(inp: SpawnSubagentInput) -> dict[str, str]:
+        if inp.role == "researcher" and "d2" in inp.user_prompt_path:
+            raise RuntimeError("simulated agent crash")
+        if inp.role == "direction-expander":
+            return {"DIRECTIONS": "[]"}
+        return await _fake(inp)
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=TASK_QUEUE,
+            workflows=[DeepResearchWorkflow],
+            activities=[write_artifact, emit_finding, _fake_one_fails],
+            workflow_runner=_SANDBOX,
+        ):
+            await env.client.execute_workflow(
+                DeepResearchWorkflow.run,
+                DeepResearchInput(
+                    run_id="dr-partial-fail",
+                    seed="Topic",
+                    inbox_path=str(tmp_path / "INBOX.md"),
+                    run_dir=str(tmp_path / "run"),
+                    max_directions=5,
+                    notify=False,
+                ),
+                id="dr-partial-fail",
+                task_queue=TASK_QUEUE,
+            )
+
+    findings_dir = tmp_path / "run" / "deep-research-findings"
+    findings = list(findings_dir.glob("d*.md"))
+    assert len(findings) == 4, f"Expected 4 findings (5 dirs minus 1 failure), got {len(findings)}"
+    assert (tmp_path / "run" / "research-report.md").exists()
+
+
+async def test_progress_json_tracks_researcher_status(tmp_path) -> None:
+    """progress.json must exist and contain researchers_completed and researchers_pending fields."""
+
+    @activity.defn(name="spawn_subagent")
+    async def _fake_no_expand(inp: SpawnSubagentInput) -> dict[str, str]:
+        if inp.role == "direction-expander":
+            return {"DIRECTIONS": "[]"}
+        return await _fake(inp)
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=TASK_QUEUE,
+            workflows=[DeepResearchWorkflow],
+            activities=[write_artifact, emit_finding, _fake_no_expand],
+            workflow_runner=_SANDBOX,
+        ):
+            await env.client.execute_workflow(
+                DeepResearchWorkflow.run,
+                DeepResearchInput(
+                    run_id="dr-progress",
+                    seed="Topic",
+                    inbox_path=str(tmp_path / "INBOX.md"),
+                    run_dir=str(tmp_path / "run"),
+                    max_directions=3,
+                    notify=False,
+                ),
+                id="dr-progress",
+                task_queue=TASK_QUEUE,
+            )
+
+    progress_file = tmp_path / "run" / "progress.json"
+    assert progress_file.exists(), "progress.json must be written"
+    progress = json.loads(progress_file.read_text())
+    assert "researchers_completed" in progress, "progress must track researchers_completed"
+    assert progress["researchers_completed"] > 0
+    assert progress["findings_total"] > 0
+    assert "researchers_pending" in progress, "progress must show which researchers are still pending"
+
+
+async def test_expansion_direction_ids_use_next_round(tmp_path) -> None:
+    """Expander at round N must generate IDs with d_r{N+1}_ prefix, not d_r{N}_."""
+
+    @activity.defn(name="spawn_subagent")
+    async def _fake_with_expansion(inp: SpawnSubagentInput) -> dict[str, str]:
+        if inp.role == "direction-expander":
+            dirs = [
+                {"id": "d_r2_1", "dimension": "HOW", "question": "Follow-up Q1?", "priority": "high"},
+                {"id": "d_r2_2", "dimension": "WHAT", "question": "Follow-up Q2?", "priority": "medium"},
+            ]
+            return {"DIRECTIONS": json.dumps(dirs)}
+        return await _fake(inp)
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=TASK_QUEUE,
+            workflows=[DeepResearchWorkflow],
+            activities=[write_artifact, emit_finding, _fake_with_expansion],
+            workflow_runner=_SANDBOX,
+        ):
+            await env.client.execute_workflow(
+                DeepResearchWorkflow.run,
+                DeepResearchInput(
+                    run_id="dr-ids",
+                    seed="Topic",
+                    inbox_path=str(tmp_path / "INBOX.md"),
+                    run_dir=str(tmp_path / "run"),
+                    max_directions=3,
+                    max_rounds=2,
+                    notify=False,
+                ),
+                id="dr-ids",
+                task_queue=TASK_QUEUE,
+            )
+
+    findings_dir = tmp_path / "run" / "deep-research-findings"
+    r2_findings = list(findings_dir.glob("d_r2_*.md"))
+    assert len(r2_findings) >= 1, (
+        f"Round 2 findings should use d_r2_ prefix (matching next round, not current). "
+        f"Found: {[f.name for f in findings_dir.glob('*.md')]}"
+    )
