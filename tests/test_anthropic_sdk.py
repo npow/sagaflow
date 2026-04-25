@@ -5,7 +5,7 @@ import anthropic
 import httpx
 import pytest
 
-from sagaflow.transport.anthropic_sdk import AnthropicSdkTransport, ModelTier, _MAX_DELAY_S
+from sagaflow.transport.anthropic_sdk import AnthropicSdkTransport, ModelTier, _MAX_DELAY_S, _DEFAULT_MAX_ELAPSED_S
 
 
 def _make_stream_context(text="hello back", input_tokens=5, output_tokens=2):
@@ -158,6 +158,31 @@ async def test_non_retryable_error_raises_immediately() -> None:
             tier=ModelTier.HAIKU, system_prompt="s", user_prompt="u", max_tokens=16,
         )
     assert client.messages.stream.call_count == 1
+
+
+@patch("sagaflow.transport.anthropic_sdk.time.monotonic")
+@patch("sagaflow.transport.anthropic_sdk.asyncio.sleep", new_callable=AsyncMock)
+async def test_raises_after_max_elapsed_exceeded(mock_sleep, mock_time) -> None:
+    """Transport stops retrying after max_elapsed_s is exceeded."""
+    fail_error = _make_api_status_error(529)
+    # Simulate time advancing past the ceiling on the 3rd attempt
+    mock_time.side_effect = [0.0, 0.0, 5.0, 5.0, 11.0]  # started=0, check=0, check=5, check=11
+    client = SimpleNamespace(
+        messages=SimpleNamespace(stream=MagicMock(side_effect=fail_error))
+    )
+    transport = AnthropicSdkTransport(client=client)
+    with pytest.raises(anthropic.APIStatusError):
+        await transport.call(
+            tier=ModelTier.HAIKU, system_prompt="s", user_prompt="u", max_tokens=16,
+            max_elapsed_s=10.0,
+        )
+    # Should have retried until elapsed >= 10s, not indefinitely
+    assert client.messages.stream.call_count >= 2
+    assert client.messages.stream.call_count <= 4
+
+
+def test_default_max_elapsed_is_one_hour() -> None:
+    assert _DEFAULT_MAX_ELAPSED_S == 3600.0
 
 
 @patch("sagaflow.transport.anthropic_sdk.asyncio.sleep", new_callable=AsyncMock)

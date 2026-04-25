@@ -16,7 +16,8 @@ logger = logging.getLogger(__name__)
 
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 529}
 _BASE_DELAY_S = 3.0
-_MAX_DELAY_S = 120.0  # cap between retries; total ceiling governed by Temporal activity timeout
+_MAX_DELAY_S = 120.0
+_DEFAULT_MAX_ELAPSED_S = 3600.0  # 1hr safety ceiling; Temporal activity timeout provides defense-in-depth
 
 
 class ModelTier(Enum):
@@ -53,6 +54,7 @@ class AnthropicSdkTransport:
         system_prompt: str,
         user_prompt: str,
         max_tokens: int,
+        max_elapsed_s: float = _DEFAULT_MAX_ELAPSED_S,
     ) -> TransportResult:
         started = time.monotonic()
         attempt = 0
@@ -74,15 +76,16 @@ class AnthropicSdkTransport:
                     output_tokens=response.usage.output_tokens,
                 )
             except anthropic.APIStatusError as exc:
-                if exc.status_code not in _RETRYABLE_STATUS_CODES:
+                elapsed = time.monotonic() - started
+                if exc.status_code not in _RETRYABLE_STATUS_CODES or elapsed >= max_elapsed_s:
                     raise
                 delay = min(_BASE_DELAY_S * (2 ** attempt), _MAX_DELAY_S)
-                elapsed = time.monotonic() - started
                 logger.warning(
-                    "Anthropic API %d (attempt %d, %.0fs elapsed), retrying in %.0fs",
+                    "Anthropic API %d (attempt %d, %.0fs/%.0fs elapsed), retrying in %.0fs",
                     exc.status_code,
                     attempt + 1,
                     elapsed,
+                    max_elapsed_s,
                     delay,
                 )
                 await asyncio.sleep(delay)
