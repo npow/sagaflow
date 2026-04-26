@@ -70,6 +70,13 @@ class AnthropicSdkTransport:
                 text_parts = [
                     block.text for block in response.content if block.type == "text"
                 ]
+                if response.stop_reason == "max_tokens":
+                    logger.warning(
+                        "Response truncated (stop_reason=max_tokens, output_tokens=%d, limit=%d, model=%s)",
+                        response.usage.output_tokens,
+                        max_tokens,
+                        tier.model_id,
+                    )
                 return TransportResult(
                     text="".join(text_parts),
                     input_tokens=response.usage.input_tokens,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +20,8 @@ from sagaflow.transport.structured_output import (
     MalformedResponseError,
     parse_structured,
 )
+
+logger = logging.getLogger(__name__)
 
 MALFORMED_SENTINEL = "_sagaflow_malformed"
 HEARTBEAT_INTERVAL_SECONDS = 20.0
@@ -142,11 +145,15 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
     try:
         return parse_structured(raw)
     except MalformedResponseError as exc:
-        # Soft-fail: return a sentinel so the workflow can continue with partial data
-        # instead of crashing on one bad subagent response. Callers that need strict
-        # parsing can check `result.get(MALFORMED_SENTINEL)`; those that .get() real
-        # keys with defaults degrade gracefully.
         truncated_raw = raw[:2000] if isinstance(raw, str) else ""
+        logger.warning(
+            "Malformed subagent response (label=%s, role=%s, error=%s, raw_len=%d): %s",
+            label,
+            inp.role,
+            exc,
+            len(raw) if isinstance(raw, str) else 0,
+            truncated_raw[:500],
+        )
         return {
             MALFORMED_SENTINEL: "1",
             "_error": str(exc),
