@@ -106,6 +106,7 @@ class SubagentInput:
     allowed_tool_names: list[str] = field(default_factory=list)
     max_iterations: int = 20
     tier_name: str = "HAIKU"
+    output_schema: dict | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -471,6 +472,7 @@ class SubagentWorkflow:
                     tools=subagent_tools,
                     tier_name=inp.tier_name,
                     max_tokens=_CLAUDE_MAX_TOKENS,
+                    output_schema=inp.output_schema,
                 ),
                 result_type=ClaudeResponse,
                 start_to_close_timeout=timedelta(seconds=300),
@@ -608,6 +610,9 @@ async def _dispatch_spawn_subagent(
         max_iter_int = 20
     max_iter_int = max(1, min(max_iter_int, 200))
 
+    raw_output_schema = args.get("output_schema")
+    output_schema = dict(raw_output_schema) if isinstance(raw_output_schema, dict) else None
+
     child_input = SubagentInput(
         role=role,
         system_prompt=system_prompt,
@@ -616,6 +621,7 @@ async def _dispatch_spawn_subagent(
         allowed_tool_names=tools_clean,
         max_iterations=max_iter_int,
         tier_name=tier_name,
+        output_schema=output_schema,
     )
     try:
         result = await workflow.execute_child_workflow(

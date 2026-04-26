@@ -8,10 +8,11 @@ import pytest
 from sagaflow.transport.anthropic_sdk import AnthropicSdkTransport, ModelTier, _MAX_DELAY_S, _DEFAULT_MAX_ELAPSED_S
 
 
-def _make_stream_context(text="hello back", input_tokens=5, output_tokens=2):
+def _make_stream_context(text="hello back", input_tokens=5, output_tokens=2, stop_reason="end_turn"):
     final_message = SimpleNamespace(
         content=[SimpleNamespace(type="text", text=text)],
         usage=SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens),
+        stop_reason=stop_reason,
     )
     ctx = AsyncMock()
     ctx.__aenter__ = AsyncMock(return_value=ctx)

@@ -18,6 +18,7 @@ class SubagentRequest:
     tools_needed: bool
     label: str = ""
     cli_timeout_seconds: float = 3600.0
+    output_schema: dict | None = None
 
 
 _TIER_TO_MODEL_ALIAS: dict[str, str] = {
@@ -50,5 +51,6 @@ async def dispatch_subagent(
         system_prompt=request.system_prompt,
         user_prompt=request.user_prompt,
         max_tokens=request.max_tokens,
+        output_schema=request.output_schema,
     )
     return sdk_result.text

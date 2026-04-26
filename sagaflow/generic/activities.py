@@ -47,6 +47,7 @@ class CallClaudeInput:
     tools: list[dict]             # Anthropic tool schemas
     tier_name: str                # "HAIKU" | "SONNET" | "OPUS"
     max_tokens: int = 4096
+    output_schema: dict | None = None  # JSON Schema → output_config.format
 
 
 @dataclass(frozen=True)
@@ -122,13 +123,18 @@ async def call_claude_with_tools(inp: CallClaudeInput) -> ClaudeResponse:
         beat_task = None
 
     try:
-        response = await client.messages.create(
-            model=tier.model_id,
-            max_tokens=inp.max_tokens,
-            system=inp.system_prompt,
-            messages=inp.messages,
-            tools=inp.tools,
-        )
+        api_kwargs: dict = {
+            "model": tier.model_id,
+            "max_tokens": inp.max_tokens,
+            "system": inp.system_prompt,
+            "messages": inp.messages,
+            "tools": inp.tools,
+        }
+        if inp.output_schema is not None:
+            api_kwargs["output_config"] = {
+                "format": {"type": "json_schema", "schema": inp.output_schema},
+            }
+        response = await client.messages.create(**api_kwargs)
     finally:
         if beat_task is not None:
             beat_task.cancel()

@@ -55,17 +55,23 @@ class AnthropicSdkTransport:
         user_prompt: str,
         max_tokens: int,
         max_elapsed_s: float = _DEFAULT_MAX_ELAPSED_S,
+        output_schema: dict | None = None,
     ) -> TransportResult:
         started = time.monotonic()
         attempt = 0
         while True:
             try:
-                async with self._client.messages.stream(
-                    model=tier.model_id,
-                    max_tokens=max_tokens,
-                    system=system_prompt,
-                    messages=[{"role": "user", "content": user_prompt}],
-                ) as stream:
+                stream_kwargs: dict = {
+                    "model": tier.model_id,
+                    "max_tokens": max_tokens,
+                    "system": system_prompt,
+                    "messages": [{"role": "user", "content": user_prompt}],
+                }
+                if output_schema is not None:
+                    stream_kwargs["output_config"] = {
+                        "format": {"type": "json_schema", "schema": output_schema},
+                    }
+                async with self._client.messages.stream(**stream_kwargs) as stream:
                     response = await stream.get_final_message()
                 text_parts = [
                     block.text for block in response.content if block.type == "text"

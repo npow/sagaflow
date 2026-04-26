@@ -78,6 +78,7 @@ class SpawnSubagentInput:
     user_prompt_path: str
     max_tokens: int
     tools_needed: bool
+    output_schema: dict | None = None
 
 
 def _get_sdk() -> AnthropicSdkTransport:
@@ -135,6 +136,7 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
         max_tokens=inp.max_tokens,
         tools_needed=inp.tools_needed,
         label=label,
+        output_schema=inp.output_schema,
     )
 
     beat_task: asyncio.Task[None] | None = None
@@ -151,6 +153,17 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
             beat_task.cancel()
             with contextlib.suppress(BaseException):
                 await beat_task
+
+    if inp.output_schema is not None:
+        import json
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError) as exc:
+            logger.warning(
+                "Schema-constrained response not valid JSON (label=%s, role=%s, error=%s)",
+                label, inp.role, exc,
+            )
+            return {MALFORMED_SENTINEL: "1", "_error": str(exc), "_raw": raw[:2000]}
 
     try:
         return parse_structured(raw)

@@ -262,6 +262,16 @@ SPAWN_SUBAGENT_TOOL: dict[str, Any] = {
                 "minimum": 1,
                 "maximum": 200,
             },
+            "output_schema": {
+                "type": "object",
+                "description": (
+                    "Optional JSON Schema that constrains the subagent's final "
+                    "text output via Anthropic's constrained decoding "
+                    "(output_config.format). When provided, the subagent's "
+                    "response is guaranteed to be valid JSON matching this "
+                    "schema. Omit for free-text output."
+                ),
+            },
         },
         "required": ["role", "system_prompt", "user_prompt"],
     },
