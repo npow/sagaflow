@@ -154,8 +154,16 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
             len(raw) if isinstance(raw, str) else 0,
             truncated_raw[:500],
         )
+        raw_path = ""
+        try:
+            dump = prompt_path.with_suffix(".malformed_response")
+            dump.write_text(raw if isinstance(raw, str) else "", encoding="utf-8")
+            raw_path = str(dump)
+        except OSError:
+            pass
         return {
             MALFORMED_SENTINEL: "1",
             "_error": str(exc),
             "_raw": truncated_raw,
+            "_raw_path": raw_path,
         }
