@@ -76,8 +76,8 @@ class SpawnSubagentInput:
     tier_name: str                # ModelTier.name — pydantic-safe string
     system_prompt: str
     user_prompt_path: str
-    max_tokens: int
     tools_needed: bool
+    max_tokens: int = 128_000
     output_schema: dict | None = None
 
 

@@ -46,7 +46,7 @@ class CallClaudeInput:
     messages: list[dict]          # [{"role": "user"|"assistant", "content": str | list}]
     tools: list[dict]             # Anthropic tool schemas
     tier_name: str                # "HAIKU" | "SONNET" | "OPUS"
-    max_tokens: int = 4096
+    max_tokens: int = 128_000
     output_schema: dict | None = None  # JSON Schema → output_config.format
 
 
