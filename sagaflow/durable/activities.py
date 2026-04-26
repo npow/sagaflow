@@ -113,6 +113,16 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
     if not user_prompt.strip():
         raise FileNotFoundError(f"subagent input file is empty: {prompt_path}")
 
+    _PROMPT_SIZE_WARN = 8192
+    if len(user_prompt) > _PROMPT_SIZE_WARN:
+        logger.warning(
+            "Oversized prompt file (%d bytes, threshold %d) — "
+            "content may be inlined instead of referenced by path: %s",
+            len(user_prompt),
+            _PROMPT_SIZE_WARN,
+            prompt_path,
+        )
+
     tier = ModelTier[inp.tier_name]
     sdk = _get_sdk()
     cli = _get_cli()
