@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -89,6 +90,8 @@ class SpawnSubagentInput:
     tools_needed: bool
     max_tokens: int = 128_000
     output_schema: dict | None = None
+    run_dir: str = ""
+    step_index: int = 0
 
 
 def _get_sdk() -> AnthropicSdkTransport:
@@ -156,6 +159,7 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
         # No running event loop (shouldn't happen in activity context, but safe).
         beat_task = None
 
+    t0 = time.monotonic()
     try:
         dr = await dispatch_subagent(request, sdk_transport=sdk, cli_transport=cli)
     finally:
@@ -163,6 +167,24 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
             beat_task.cancel()
             with contextlib.suppress(BaseException):
                 await beat_task
+    elapsed = round(time.monotonic() - t0, 1)
+
+    if inp.run_dir:
+        from sagaflow.manifest import StepRecord, append_step as _append_step
+        _append_step(
+            Path(inp.run_dir),
+            StepRecord(
+                step=inp.step_index,
+                role=inp.role,
+                model=dr.model,
+                tier=inp.tier_name,
+                input_tokens=dr.input_tokens,
+                output_tokens=dr.output_tokens,
+                duration_seconds=elapsed,
+                status="ok",
+                output_schema_used=inp.output_schema is not None,
+            ),
+        )
 
     raw = dr.text
     _token_meta = {
@@ -221,3 +243,24 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
             "_raw_path": raw_path,
             **_token_meta,
         }
+
+
+@dataclass(frozen=True)
+class FinalizeManifestInput:
+    run_dir: str
+    status: str
+    termination_label: str = ""
+    error: str = ""
+
+
+@activity.defn(name="finalize_manifest")
+async def finalize_manifest_activity(inp: FinalizeManifestInput) -> None:
+    from sagaflow.manifest import finalize_manifest
+
+    termination = {"label": inp.termination_label} if inp.termination_label else None
+    finalize_manifest(
+        run_dir=Path(inp.run_dir),
+        status=inp.status,
+        termination=termination,
+        error=inp.error or None,
+    )

@@ -38,7 +38,7 @@ async def test_dispatch_uses_sdk_when_no_tools_needed(fake_sdk, fake_cli) -> Non
         sdk_transport=fake_sdk,
         cli_transport=fake_cli,
     )
-    assert result == "sdk output"
+    assert result.text == "sdk output"
     fake_sdk.call.assert_awaited_once()
     fake_cli.call.assert_not_awaited()
 
@@ -56,7 +56,7 @@ async def test_dispatch_uses_cli_when_tools_needed(fake_sdk, fake_cli) -> None:
         sdk_transport=fake_sdk,
         cli_transport=fake_cli,
     )
-    assert result == "cli output"
+    assert result.text == "cli output"
     fake_cli.call.assert_awaited_once()
     fake_sdk.call.assert_not_awaited()
 

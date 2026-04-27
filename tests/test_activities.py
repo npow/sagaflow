@@ -81,7 +81,9 @@ async def test_spawn_subagent_returns_parsed_structured_output(tmp_path) -> None
                 tools_needed=False,
             )
         )
-    assert parsed == {"VERDICT": "OK"}
+    assert parsed["VERDICT"] == "OK"
+    assert parsed["_input_tokens"] == "10"
+    assert parsed["_output_tokens"] == "5"
     sdk_call.assert_awaited()
 
 
@@ -167,6 +169,7 @@ async def test_spawn_subagent_cancels_heartbeat_on_completion(tmp_path) -> None:
                 tools_needed=False,
             )
         )
-    assert parsed == {"K": "V"}
+    assert parsed["K"] == "V"
+    assert "_input_tokens" in parsed
     # Fast call → heartbeat should fire zero or one time before cancellation.
     assert beat.call_count <= 2

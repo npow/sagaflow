@@ -33,6 +33,7 @@ classifiers = [
 dependencies = [
     "anthropic>=0.40.0",
     "click>=8.1.0",
+    "filelock>=3.12.0",
     "PyYAML>=6.0",
     "temporalio>=1.8.0",
 ]

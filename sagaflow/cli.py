@@ -76,6 +76,15 @@ def _start_workflow(skill: str, args: dict) -> str:  # type: ignore[type-arg]
         run_dir = paths.run_dir_for(run_id)
         run_dir.mkdir(parents=True, exist_ok=True)
 
+        from sagaflow.manifest import initialize_manifest
+        initialize_manifest(
+            run_dir=run_dir,
+            run_id=run_id,
+            skill=spec.name,
+            args={k: str(v) for k, v in args.items() if not str(k).startswith("_")},
+            input_path=str(args.get("path", "")) or None,
+        )
+
         slack_channel = args.pop("_slack_channel", None)
         slack_thread_ts = args.pop("_slack_thread_ts", None)
         if slack_channel:
@@ -523,6 +532,299 @@ def mission_abort(workflow_id: str, reason: str) -> None:
         click.echo(f"error: abort signal failed: {exc}", err=True)
         sys.exit(1)
     click.echo(f"abort signal sent to {workflow_id}")
+
+
+# ---------------------------------------------------------------------------
+# catalog subcommands — skill capability discovery
+# ---------------------------------------------------------------------------
+
+
+@main.group()
+def catalog() -> None:
+    """Skill capability discovery catalog."""
+
+
+def _get_catalog(force: bool = False) -> "SkillCatalog":  # type: ignore[name-defined]
+    from sagaflow.catalog import build_catalog
+    return build_catalog(force=force)
+
+
+@catalog.command(name="list")
+@click.option("--category", default=None, help="Filter by category enum value")
+@click.option("--capability", default=None, help="Filter by capability tag")
+@click.option("--maturity", default=None, help="Filter by maturity level")
+def catalog_list(category: str | None, capability: str | None, maturity: str | None) -> None:
+    """List skills with optional filters."""
+    cat = _get_catalog()
+    skills = cat.list_all(category=category, maturity=maturity, capability=capability)
+    if not skills:
+        click.echo("no skills match filters")
+        return
+    header = f"{'SKILL':<30} {'COMPLEXITY':<12} {'COST':<8} {'MATURITY':<12} CAPABILITIES"
+    click.echo(header)
+    for s in skills:
+        caps = ", ".join(s.capabilities[:3]) if s.capabilities else "-"
+        click.echo(
+            f"{s.name:<30} {s.complexity or '-':<12} {s.cost_profile or '-':<8} "
+            f"{s.maturity or '-':<12} {caps}"
+        )
+
+
+@catalog.command()
+@click.argument("query")
+def search(query: str) -> None:
+    """Search skills by keyword."""
+    cat = _get_catalog()
+    results = cat.search(query)
+    if not results:
+        click.echo("no results")
+        return
+    for s, score in results[:15]:
+        click.echo(f"  {s.name:<30} {score:.2f}  {s.description[:60]}")
+
+
+@catalog.command(name="show")
+@click.argument("name")
+def catalog_show(name: str) -> None:
+    """Show detailed info for a skill."""
+    cat = _get_catalog()
+    s = cat.show(name)
+    if not s:
+        click.echo(f"skill {name!r} not found")
+        return
+    cost_str = f", {s.cost_profile} cost" if s.cost_profile else ""
+    click.echo(f"{s.name} — {s.maturity or 'unset'}, {s.complexity or 'unset'} complexity{cost_str}")
+    if s.category:
+        click.echo(f"  Category:     {s.category}")
+    if s.capabilities:
+        click.echo(f"  Capabilities: {', '.join(s.capabilities)}")
+    if s.input_types:
+        click.echo(f"  Input types:  {', '.join(s.input_types)}")
+    if s.output_types:
+        click.echo(f"  Output types: {', '.join(s.output_types)}")
+    if s.output_signals:
+        click.echo(f"  Output keys:  {', '.join(s.output_signals)}")
+    if s.best_for:
+        click.echo(f"  Best for:     {'; '.join(s.best_for)}")
+    if s.not_for:
+        click.echo(f"  Not for:      {'; '.join(s.not_for)}")
+    if s.execution:
+        parts = [f"{k}={v}" for k, v in s.execution.items()]
+        click.echo(f"  Execution:    {', '.join(parts)}")
+    related = cat.related(name)
+    if related:
+        click.echo(f"  Related:      {', '.join(r['name'] + ' (' + r.get('relation','') + ')' for r in related)}")
+    if s.metadata_source:
+        click.echo(f"  Metadata:     {s.metadata_source}")
+
+
+@catalog.command(name="match")
+@click.argument("intent")
+@click.option("--input-type", default=None, help="Expected input type")
+@click.option("--output-type", default=None, help="Expected output type")
+def catalog_match(intent: str, input_type: str | None, output_type: str | None) -> None:
+    """Match intent to skills by capability scoring."""
+    cat = _get_catalog()
+    results = cat.match(intent, input_type=input_type, output_type=output_type)
+    if not results:
+        click.echo("no matches")
+        return
+    click.echo(f"{'RANK':<6} {'SKILL':<25} {'SCORE':<7} REASON")
+    for i, (s, score, signals) in enumerate(results[:10], 1):
+        parts = [f"{k}={v:.2f}" for k, v in signals.items() if v > 0]
+        click.echo(f"{i:<6} {s.name:<25} {score:<7.2f} {', '.join(parts)}")
+
+
+@catalog.command()
+def rebuild() -> None:
+    """Force rebuild catalog from SKILL.md files."""
+    from sagaflow.catalog import (
+        SkillCatalog, default_skills_dir, default_enums_path,
+        default_cache_path, default_lock_path, _compute_source_hash,
+    )
+    skills_dir = default_skills_dir()
+    enums_path = default_enums_path()
+    cat = SkillCatalog.from_skills_dir(skills_dir, enums_path)
+    h = _compute_source_hash(skills_dir, enums_path)
+    cat.save(default_cache_path(), default_lock_path(), h)
+    st = cat.stats()
+    click.echo(f"rebuilt: {st['total']} skills, {st['with_metadata']} with metadata")
+
+
+@catalog.command()
+def stats() -> None:
+    """Show catalog statistics."""
+    cat = _get_catalog()
+    st = cat.stats()
+    click.echo(f"Total skills:    {st['total']}")
+    click.echo(f"With metadata:   {st['with_metadata']}")
+    click.echo(f"Warnings:        {st['validation_warnings']}")
+    if st["by_category"]:
+        click.echo("By category:")
+        for k, v in sorted(st["by_category"].items()):
+            click.echo(f"  {k:<15} {v}")
+    if st["by_maturity"]:
+        click.echo("By maturity:")
+        for k, v in sorted(st["by_maturity"].items()):
+            click.echo(f"  {k:<15} {v}")
+
+
+@catalog.command()
+@click.option("--strict", is_flag=True, help="Treat unknown enum values as errors")
+def lint(strict: bool) -> None:
+    """Validate skill metadata against enum registry."""
+    from sagaflow.catalog import SkillCatalog, default_skills_dir, default_enums_path
+    cat = SkillCatalog.from_skills_dir(default_skills_dir(), default_enums_path())
+    issues = cat.lint(strict=strict)
+    if not issues:
+        click.echo("no issues found")
+        return
+    for issue in issues:
+        click.echo(f"  {issue}")
+    errors = [i for i in issues if i.startswith("ERROR")]
+    click.echo(f"\n{len(issues)} issues ({len(errors)} errors)")
+    if strict and errors:
+        sys.exit(1)
+
+
+@main.command()
+@click.argument("run_a")
+@click.argument("run_b")
+@click.option("--format", "fmt", type=click.Choice(["text", "json", "markdown"]), default="text")
+def compare(run_a: str, run_b: str, fmt: str) -> None:
+    """Compare two runs by run-id or path."""
+    from pathlib import Path
+    from sagaflow.compare import compare_runs, format_comparison
+    from sagaflow.manifest import read_manifest
+    from sagaflow.paths import Paths
+
+    paths = Paths.from_env()
+    _EXIT = {"IDENTICAL": 0, "COSMETIC_CHANGE": 0, "BEHAVIORAL_CHANGE": 1,
+             "IMPROVEMENT": 1, "REGRESSION": 2, "INCOMPARABLE": 3}
+
+    def _resolve(ref: str) -> Path:
+        p = Path(ref)
+        if p.is_dir():
+            return p
+        return paths.run_dir_for(ref)
+
+    try:
+        dir_a, dir_b = _resolve(run_a), _resolve(run_b)
+        ma, mb = read_manifest(dir_a), read_manifest(dir_b)
+    except Exception as exc:
+        click.echo(f"error: {exc}", err=True)
+        sys.exit(4)
+
+    result = compare_runs(ma, mb)
+    click.echo(format_comparison(result, fmt=fmt))
+    sys.exit(_EXIT.get(result.verdict, 4))
+
+
+@main.command()
+@click.option("--skill", default=None, help="Filter by skill name.")
+@click.option("--limit", default=20, help="Max runs to show.")
+@click.option("--status", default=None, help="Filter by status (COMPLETED, FAILED).")
+def history(skill: str | None, limit: int, status: str | None) -> None:
+    """List runs with manifest data."""
+    from sagaflow.manifest import read_manifest, _MANIFEST_FILE
+    from sagaflow.paths import Paths
+
+    paths = Paths.from_env()
+    runs_dir = paths.runs_dir
+    if not runs_dir.is_dir():
+        click.echo("no runs found")
+        return
+
+    rows: list[tuple[str, str, str, str, str]] = []
+    for rd in sorted(runs_dir.iterdir(), reverse=True):
+        if not rd.is_dir():
+            continue
+        mf = rd / _MANIFEST_FILE
+        if not mf.exists():
+            continue
+        try:
+            m = read_manifest(rd)
+        except Exception:
+            continue
+        if skill and m.skill != skill:
+            continue
+        if status and m.status != status.upper():
+            continue
+        cost = m.cost.get("estimated_cost_usd") if m.cost else None
+        cost_str = f"${cost:.2f}" if cost is not None else "-"
+        dur = m.timing.get("duration_seconds") if m.timing else None
+        dur_str = f"{dur:.0f}s" if dur is not None else "-"
+        rows.append((m.run_id, m.skill, m.status, dur_str, cost_str))
+        if len(rows) >= limit:
+            break
+
+    if not rows:
+        click.echo("no matching runs")
+        return
+    click.echo(f"{'RUN_ID':<45} {'SKILL':<20} {'STATUS':<12} {'DUR':>6} {'COST':>8}")
+    click.echo("-" * 95)
+    for rid, sk, st, dur_s, cost_s in rows:
+        click.echo(f"{rid:<45} {sk:<20} {st:<12} {dur_s:>6} {cost_s:>8}")
+
+
+@main.command()
+@click.argument("run_a")
+@click.argument("run_b")
+def regress(run_a: str, run_b: str) -> None:
+    """Check for regression between two runs. Exit 0 = no regression, 2 = regression."""
+    from pathlib import Path
+    from sagaflow.compare import compare_runs
+    from sagaflow.manifest import read_manifest
+    from sagaflow.paths import Paths
+
+    paths = Paths.from_env()
+
+    def _resolve(ref: str) -> Path:
+        p = Path(ref)
+        if p.is_dir():
+            return p
+        return paths.run_dir_for(ref)
+
+    try:
+        dir_a, dir_b = _resolve(run_a), _resolve(run_b)
+        ma, mb = read_manifest(dir_a), read_manifest(dir_b)
+    except Exception as exc:
+        click.echo(f"error: {exc}", err=True)
+        sys.exit(4)
+
+    result = compare_runs(ma, mb)
+    detail = result.termination_diff or result.verdict
+    if result.verdict == "REGRESSION":
+        click.echo(f"REGRESSION: {detail}")
+        sys.exit(2)
+    elif result.verdict == "INCOMPARABLE":
+        click.echo(f"INCOMPARABLE: {detail}")
+        sys.exit(3)
+    else:
+        click.echo(f"OK ({result.verdict}): {detail}")
+        sys.exit(0)
+
+
+@main.command()
+@click.option("--dry-run", is_flag=True, help="Show what would be backfilled.")
+@click.option("--force", is_flag=True, help="Re-backfill runs that already have manifests.")
+def backfill(dry_run: bool, force: bool) -> None:
+    """Backfill manifests for legacy runs."""
+    from sagaflow.backfill import backfill_all
+    from sagaflow.paths import Paths
+
+    paths = Paths.from_env()
+    processed = backfill_all(
+        runs_dir=paths.runs_dir,
+        inbox_path=paths.inbox,
+        dry_run=dry_run,
+        force=force,
+    )
+    if not processed:
+        click.echo("nothing to backfill")
+    else:
+        verb = "would backfill" if dry_run else "backfilled"
+        click.echo(f"{verb} {len(processed)} run(s)")
 
 
 if __name__ == "__main__":
