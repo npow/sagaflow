@@ -76,6 +76,12 @@ def _start_workflow(skill: str, args: dict) -> str:  # type: ignore[type-arg]
         run_dir = paths.run_dir_for(run_id)
         run_dir.mkdir(parents=True, exist_ok=True)
 
+        slack_channel = args.pop("_slack_channel", None)
+        slack_thread_ts = args.pop("_slack_thread_ts", None)
+        if slack_channel:
+            from sagaflow.slack_progress import init_progress_file
+            init_progress_file(run_dir, slack_channel, slack_thread_ts)
+
         # Prefer the skill's own build_input if it registered one.
         if spec.build_input is not None:
             wf_input = spec.build_input(
@@ -150,9 +156,12 @@ def _list_workflows() -> list[dict[str, str]]:
               help="Skill-specific argument. Repeat for multiple: --arg key=value --arg k2=v2")
 @click.option("--path", default=None, help="Path input (artifact/spec/task file) for skills that take one")
 @click.option("--await", "await_result", is_flag=True, help="Block until the workflow finishes")
+@click.option("--slack-channel", default=None, help="Slack channel ID to post progress updates")
+@click.option("--slack-thread-ts", default=None, help="Slack thread timestamp to reply in")
 @click.pass_context
 def launch(ctx: click.Context, skill: str, name: str | None, args_list: tuple[str, ...],
-           path: str | None, await_result: bool) -> None:
+           path: str | None, await_result: bool,
+           slack_channel: str | None, slack_thread_ts: str | None) -> None:
     """Launch a skill workflow. Non-blocking by default; --await blocks on result.
 
     Usage:
@@ -172,6 +181,10 @@ def launch(ctx: click.Context, skill: str, name: str | None, args_list: tuple[st
         args[k.strip()] = v.strip()
     if ctx.args:
         args["_extra"] = list(ctx.args)
+    if slack_channel:
+        args["_slack_channel"] = slack_channel
+    if slack_thread_ts:
+        args["_slack_thread_ts"] = slack_thread_ts
     if skill == "hello-world" and "name" not in args:
         args["name"] = "world"
 

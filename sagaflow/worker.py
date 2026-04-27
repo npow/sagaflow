@@ -352,6 +352,8 @@ async def run_worker(*, target: str = DEFAULT_TARGET) -> None:
     # Dedupe activities by Temporal name — skills and missions share some
     # (emit_finding, spawn_subagent, etc.) and Temporal rejects duplicates.
     combined = list(registry.all_activities()) + build_mission_activities()
+    from sagaflow.slack_progress import report_slack_progress as _slack_progress_act
+    combined.append(_slack_progress_act)
     seen_act: set[str] = set()
     all_activities: list = []
     for act in combined:
