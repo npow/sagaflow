@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import click
@@ -185,7 +186,7 @@ def launch(ctx: click.Context, skill: str, name: str | None, args_list: tuple[st
     if name is not None:
         args["name"] = name
     if path is not None:
-        args["path"] = path
+        args["path"] = str(Path(path).resolve())
     for kv in args_list:
         if "=" not in kv:
             raise click.UsageError(f"--arg must be key=value, got {kv!r}")
