@@ -169,7 +169,10 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
         try:
             parsed = json.loads(raw)
             if isinstance(parsed, dict):
-                parsed, _ = validate_boundary(parsed, label=label)
+                parsed, br = validate_boundary(parsed, label=label)
+            if br.truncated_fields:
+                parsed["_boundary_truncated"] = ",".join(br.truncated_fields)
+                logger.error("TRUNCATED fields in %s: %s", label, br.truncated_fields)
             return parsed
         except (json.JSONDecodeError, TypeError) as exc:
             logger.warning(
@@ -180,7 +183,10 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
 
     try:
         parsed = parse_structured(raw)
-        parsed, _ = validate_boundary(parsed, label=label)
+        parsed, br = validate_boundary(parsed, label=label)
+        if br.truncated_fields:
+            parsed["_boundary_truncated"] = ",".join(br.truncated_fields)
+            logger.error("TRUNCATED fields in %s: %s", label, br.truncated_fields)
         return parsed
     except MalformedResponseError as exc:
         truncated_raw = raw[:2000] if isinstance(raw, str) else ""
