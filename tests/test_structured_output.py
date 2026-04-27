@@ -37,9 +37,33 @@ def test_last_block_wins_when_multiple() -> None:
     assert parse_structured(text) == {"VERDICT": "VERIFIED"}
 
 
-def test_missing_markers_raises() -> None:
+def test_no_markers_no_kv_raises() -> None:
     with pytest.raises(MalformedResponseError):
         parse_structured("just some prose, no markers at all")
+
+
+def test_fallback_bare_kv_without_markers() -> None:
+    text = 'DIRECTIONS|[{"id":"d1","dimension":"WHO","question":"Who?","priority":"high"}]'
+    result = parse_structured(text)
+    assert "DIRECTIONS" in result
+    assert '"d1"' in result["DIRECTIONS"]
+
+
+def test_fallback_kv_with_preamble() -> None:
+    text = "Here are the research directions:\n\nDIRECTIONS|[{\"id\":\"d1\"}]\n\nHope this helps!"
+    result = parse_structured(text)
+    assert "DIRECTIONS" in result
+
+
+def test_fallback_multi_kv_without_markers() -> None:
+    text = "VERDICT|VERIFIED\nCONFIDENCE|high\nNOTES|all good"
+    result = parse_structured(text)
+    assert result == {"VERDICT": "VERIFIED", "CONFIDENCE": "high", "NOTES": "all good"}
+
+
+def test_fallback_raw_json_still_fails() -> None:
+    with pytest.raises(MalformedResponseError):
+        parse_structured('{"authoritative_languages": ["en"], "confidence": "high"}')
 
 
 def test_empty_block_raises() -> None:
