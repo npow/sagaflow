@@ -16,7 +16,7 @@ from sagaflow.notify import notify_desktop
 from sagaflow.transport.anthropic_sdk import AnthropicSdkTransport, ModelTier
 from sagaflow.transport.boundary import validate_boundary, validate_text_boundary
 from sagaflow.transport.claude_cli import ClaudeCliTransport
-from sagaflow.transport.dispatcher import SubagentRequest, dispatch_subagent
+from sagaflow.transport.dispatcher import DispatchResult, SubagentRequest, dispatch_subagent
 from sagaflow.transport.structured_output import (
     MalformedResponseError,
     parse_structured,
@@ -157,12 +157,19 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
         beat_task = None
 
     try:
-        raw = await dispatch_subagent(request, sdk_transport=sdk, cli_transport=cli)
+        dr = await dispatch_subagent(request, sdk_transport=sdk, cli_transport=cli)
     finally:
         if beat_task is not None:
             beat_task.cancel()
             with contextlib.suppress(BaseException):
                 await beat_task
+
+    raw = dr.text
+    _token_meta = {
+        "_input_tokens": str(dr.input_tokens),
+        "_output_tokens": str(dr.output_tokens),
+        "_model": dr.model,
+    }
 
     if inp.output_schema is not None:
         import json
@@ -173,13 +180,14 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
             if br.truncated_fields:
                 parsed["_boundary_truncated"] = ",".join(br.truncated_fields)
                 logger.error("TRUNCATED fields in %s: %s", label, br.truncated_fields)
+            parsed.update(_token_meta)
             return parsed
         except (json.JSONDecodeError, TypeError) as exc:
             logger.warning(
                 "Schema-constrained response not valid JSON (label=%s, role=%s, error=%s)",
                 label, inp.role, exc,
             )
-            return {MALFORMED_SENTINEL: "1", "_error": str(exc), "_raw": raw[:2000]}
+            return {MALFORMED_SENTINEL: "1", "_error": str(exc), "_raw": raw[:2000], **_token_meta}
 
     try:
         parsed = parse_structured(raw)
@@ -187,6 +195,7 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
         if br.truncated_fields:
             parsed["_boundary_truncated"] = ",".join(br.truncated_fields)
             logger.error("TRUNCATED fields in %s: %s", label, br.truncated_fields)
+        parsed.update(_token_meta)
         return parsed
     except MalformedResponseError as exc:
         truncated_raw = raw[:2000] if isinstance(raw, str) else ""
@@ -210,4 +219,5 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
             "_error": str(exc),
             "_raw": truncated_raw,
             "_raw_path": raw_path,
+            **_token_meta,
         }

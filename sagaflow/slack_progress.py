@@ -29,6 +29,13 @@ SLACK_SCRIPT = os.environ.get(
 
 _PROGRESS_FILE = ".slack_progress.json"
 
+# Approximate cost per million tokens by model prefix.
+_COST_PER_MTOK: dict[str, tuple[float, float]] = {
+    "claude-opus":   (15.0, 75.0),
+    "claude-sonnet": (3.0,  15.0),
+    "claude-haiku":  (0.25, 1.25),
+}
+
 
 @dataclass
 class SlackProgressStep:
@@ -44,11 +51,42 @@ class ReportSlackProgressInput:
     title: str
     steps: tuple[dict, ...] = ()  # serialized SlackProgressStep dicts
     final: bool = False
+    total_cost_usd: float = 0.0
+    total_elapsed_s: float = 0.0
+
+
+@dataclass(frozen=True)
+class DeliverArtifactInput:
+    run_dir: str
+    artifact_path: str
+    comment: str = ""
+
+
+@dataclass(frozen=True)
+class ReportSlackFailureInput:
+    run_dir: str
+    skill: str
+    error: str
+    failed_step: str = ""
 
 
 def init_progress_file(
-    run_dir: str | Path, channel: str, thread_ts: str | None = None
+    run_dir: str | Path,
+    channel: str,
+    thread_ts: str | None = None,
+    *,
+    skill_name: str = "",
+    run_id: str = "",
 ) -> Path:
+    """Write Slack routing file. Auto-creates a thread if *thread_ts* is ``None``."""
+    if not thread_ts and channel:
+        label = skill_name or run_id or "sagaflow"
+        starter_ts = _slack_post(
+            channel, None, f":rocket: *{label}* run started"
+        )
+        if starter_ts:
+            thread_ts = starter_ts
+
     path = Path(run_dir) / _PROGRESS_FILE
     path.write_text(
         json.dumps({"channel": channel, "thread_ts": thread_ts, "msg_ts": None}),
@@ -77,7 +115,14 @@ def _write_msg_ts(run_dir: str, msg_ts: str) -> None:
         pass
 
 
-def _render(title: str, steps: list[SlackProgressStep], final: bool) -> str:
+def _render(
+    title: str,
+    steps: list[SlackProgressStep],
+    final: bool,
+    *,
+    total_cost_usd: float = 0.0,
+    total_elapsed_s: float = 0.0,
+) -> str:
     icon = ":white_check_mark:" if final else ":arrows_counterclockwise:"
     lines = [f"{icon} *{title}*", ""]
     for step in steps:
@@ -97,11 +142,14 @@ def _render(title: str, steps: list[SlackProgressStep], final: bool) -> str:
 
     completed = sum(1 for s in steps if s.status == "completed")
     in_progress = sum(1 for s in steps if s.status == "in_progress")
-    footer = f"_{completed}/{len(steps)} phases"
+    footer_parts = [f"{completed}/{len(steps)} phases"]
     if in_progress:
-        footer += f" · {in_progress} running"
-    footer += "_"
-    lines.extend(["", footer])
+        footer_parts.append(f"{in_progress} running")
+    if total_elapsed_s > 0:
+        footer_parts.append(_fmt_duration(total_elapsed_s))
+    if total_cost_usd > 0:
+        footer_parts.append(f"${total_cost_usd:.2f}")
+    lines.extend(["", f"_{' · '.join(footer_parts)}_"])
     return "\n".join(lines)
 
 
@@ -111,6 +159,13 @@ def _fmt_duration(seconds: float) -> str:
     m = int(seconds) // 60
     s = int(seconds) % 60
     return f"{m}m{s:02d}s"
+
+
+def estimate_cost(input_tokens: int, output_tokens: int, model: str = "") -> float:
+    for prefix, (inp_rate, out_rate) in _COST_PER_MTOK.items():
+        if prefix in model:
+            return (input_tokens * inp_rate + output_tokens * out_rate) / 1_000_000
+    return (input_tokens * 3.0 + output_tokens * 15.0) / 1_000_000
 
 
 def _slack_post(channel: str, thread_ts: str | None, text: str) -> str | None:
@@ -123,6 +178,41 @@ def _slack_post(channel: str, thread_ts: str | None, text: str) -> str | None:
 
 def _slack_update(channel: str, ts: str, text: str) -> None:
     _slack_api("chat.update", {"channel": channel, "ts": ts, "text": text})
+
+
+def _slack_upload(channel: str, thread_ts: str | None, filepath: str, comment: str = "") -> bool:
+    """Upload a file to Slack using the v2 upload flow."""
+    path = Path(filepath)
+    if not path.exists():
+        return False
+    size = path.stat().st_size
+    # Step 1: get upload URL
+    resp = _slack_api("files.getUploadURLExternal", {
+        "filename": path.name, "length": size,
+    })
+    upload_url = resp.get("upload_url")
+    file_id = resp.get("file_id")
+    if not upload_url or not file_id:
+        return False
+    # Step 2: upload file content
+    try:
+        subprocess.run(
+            ["curl", "-s", "-F", f"file=@{filepath}", upload_url],
+            capture_output=True, timeout=30,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+    # Step 3: complete upload
+    file_entry: dict = {"id": file_id}
+    if comment:
+        file_entry["title"] = comment
+    complete_body: dict = {"files": [file_entry], "channel_id": channel}
+    if thread_ts:
+        complete_body["thread_ts"] = thread_ts
+    if comment:
+        complete_body["initial_comment"] = comment
+    _slack_api("files.completeUploadExternal", complete_body)
+    return True
 
 
 def _slack_api(method: str, body: dict) -> dict:
@@ -152,7 +242,11 @@ async def report_slack_progress(inp: ReportSlackProgressInput) -> None:
         return
 
     steps = [SlackProgressStep(**d) for d in inp.steps]
-    text = _render(inp.title, steps, inp.final)
+    text = _render(
+        inp.title, steps, inp.final,
+        total_cost_usd=inp.total_cost_usd,
+        total_elapsed_s=inp.total_elapsed_s,
+    )
 
     if msg_ts:
         _slack_update(channel, msg_ts, text)
@@ -160,3 +254,40 @@ async def report_slack_progress(inp: ReportSlackProgressInput) -> None:
         new_ts = _slack_post(channel, thread_ts, text)
         if new_ts:
             _write_msg_ts(inp.run_dir, new_ts)
+
+
+@activity.defn(name="deliver_artifact_to_slack")
+async def deliver_artifact_to_slack(inp: DeliverArtifactInput) -> None:
+    config = _read_progress_file(inp.run_dir)
+    if config is None:
+        return
+
+    channel = config.get("channel", "")
+    thread_ts = config.get("thread_ts")
+    if not channel:
+        return
+
+    artifact = Path(inp.artifact_path)
+    if not artifact.exists():
+        logger.warning("Artifact not found for Slack delivery: %s", artifact)
+        return
+
+    _slack_upload(channel, thread_ts, str(artifact), inp.comment)
+
+
+@activity.defn(name="report_slack_failure")
+async def report_slack_failure(inp: ReportSlackFailureInput) -> None:
+    config = _read_progress_file(inp.run_dir)
+    if config is None:
+        return
+
+    channel = config.get("channel", "")
+    thread_ts = config.get("thread_ts")
+    if not channel:
+        return
+
+    parts = [f":x: *{inp.skill}* failed"]
+    if inp.failed_step:
+        parts.append(f"*Step:* {inp.failed_step}")
+    parts.append(f"```{inp.error[:1500]}```")
+    _slack_post(channel, thread_ts, "\n".join(parts))

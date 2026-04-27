@@ -80,7 +80,10 @@ def _start_workflow(skill: str, args: dict) -> str:  # type: ignore[type-arg]
         slack_thread_ts = args.pop("_slack_thread_ts", None)
         if slack_channel:
             from sagaflow.slack_progress import init_progress_file
-            init_progress_file(run_dir, slack_channel, slack_thread_ts)
+            init_progress_file(
+                run_dir, slack_channel, slack_thread_ts,
+                skill_name=spec.name, run_id=run_id,
+            )
 
         # Prefer the skill's own build_input if it registered one.
         if spec.build_input is not None:

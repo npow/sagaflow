@@ -21,6 +21,14 @@ class SubagentRequest:
     output_schema: dict | None = None
 
 
+@dataclass(frozen=True)
+class DispatchResult:
+    text: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    model: str = ""
+
+
 _TIER_TO_MODEL_ALIAS: dict[str, str] = {
     "HAIKU": "haiku",
     "SONNET": "sonnet",
@@ -33,7 +41,7 @@ async def dispatch_subagent(
     *,
     sdk_transport: AnthropicSdkTransport,
     cli_transport: ClaudeCliTransport,
-) -> str:
+) -> DispatchResult:
     if request.tools_needed:
         combined_prompt = f"{request.system_prompt}\n\n---\n\n{request.user_prompt}"
         model_alias = _TIER_TO_MODEL_ALIAS.get(request.tier.name, "opus")
@@ -44,7 +52,7 @@ async def dispatch_subagent(
             label=request.label,
             dangerously_skip_permissions=True,
         )
-        return result.stdout
+        return DispatchResult(text=result.stdout)
 
     sdk_result = await sdk_transport.call(
         tier=request.tier,
@@ -53,4 +61,9 @@ async def dispatch_subagent(
         max_tokens=request.max_tokens,
         output_schema=request.output_schema,
     )
-    return sdk_result.text
+    return DispatchResult(
+        text=sdk_result.text,
+        input_tokens=sdk_result.input_tokens,
+        output_tokens=sdk_result.output_tokens,
+        model=request.tier.model_id,
+    )

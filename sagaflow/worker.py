@@ -24,7 +24,7 @@ from sagaflow.temporal_client import DEFAULT_NAMESPACE, DEFAULT_TARGET, TASK_QUE
 
 _log = logging.getLogger(__name__)
 
-_PASSTHROUGH_MODULES = ("httpx", "anthropic", "sagaflow", "pydantic", "skills", "claude_skill_")
+_PASSTHROUGH_MODULES = ("httpx", "anthropic", "sagaflow", "pydantic", "skills", "claude_skill_", "sniffio")
 
 
 def _build_sandbox_runner() -> SandboxedWorkflowRunner:
@@ -352,8 +352,12 @@ async def run_worker(*, target: str = DEFAULT_TARGET) -> None:
     # Dedupe activities by Temporal name — skills and missions share some
     # (emit_finding, spawn_subagent, etc.) and Temporal rejects duplicates.
     combined = list(registry.all_activities()) + build_mission_activities()
-    from sagaflow.slack_progress import report_slack_progress as _slack_progress_act
-    combined.append(_slack_progress_act)
+    from sagaflow.slack_progress import (
+        report_slack_progress as _slack_progress_act,
+        deliver_artifact_to_slack as _deliver_artifact_act,
+        report_slack_failure as _slack_failure_act,
+    )
+    combined.extend([_slack_progress_act, _deliver_artifact_act, _slack_failure_act])
     seen_act: set[str] = set()
     all_activities: list = []
     for act in combined:
