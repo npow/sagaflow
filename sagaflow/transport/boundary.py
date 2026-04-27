@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-MAX_FIELD_BYTES = 50_000
+MAX_FIELD_BYTES = 200_000
 MAX_RESPONSE_BYTES = 500_000
 MAX_FIELDS = 100
 
