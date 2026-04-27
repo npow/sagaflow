@@ -14,6 +14,7 @@ from temporalio import activity
 from sagaflow.inbox import Inbox, InboxEntry
 from sagaflow.notify import notify_desktop
 from sagaflow.transport.anthropic_sdk import AnthropicSdkTransport, ModelTier
+from sagaflow.transport.boundary import validate_boundary, validate_text_boundary
 from sagaflow.transport.claude_cli import ClaudeCliTransport
 from sagaflow.transport.dispatcher import SubagentRequest, dispatch_subagent
 from sagaflow.transport.structured_output import (
@@ -37,7 +38,16 @@ class WriteArtifactInput:
 async def write_artifact(inp: WriteArtifactInput) -> None:
     target = Path(inp.path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(inp.content, encoding="utf-8")
+    content, boundary = validate_text_boundary(
+        inp.content, label=f"write_artifact:{target.name}",
+    )
+    if boundary.injection_flags:
+        logger.warning(
+            "Artifact %s has injection flags — logging only, not blocking: %s",
+            target.name,
+            "; ".join(boundary.injection_flags),
+        )
+    target.write_text(content, encoding="utf-8")
 
 
 @dataclass(frozen=True)
@@ -157,7 +167,10 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
     if inp.output_schema is not None:
         import json
         try:
-            return json.loads(raw)
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                parsed, _ = validate_boundary(parsed, label=label)
+            return parsed
         except (json.JSONDecodeError, TypeError) as exc:
             logger.warning(
                 "Schema-constrained response not valid JSON (label=%s, role=%s, error=%s)",
@@ -166,7 +179,9 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
             return {MALFORMED_SENTINEL: "1", "_error": str(exc), "_raw": raw[:2000]}
 
     try:
-        return parse_structured(raw)
+        parsed = parse_structured(raw)
+        parsed, _ = validate_boundary(parsed, label=label)
+        return parsed
     except MalformedResponseError as exc:
         truncated_raw = raw[:2000] if isinstance(raw, str) else ""
         logger.warning(
