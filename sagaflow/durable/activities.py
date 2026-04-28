@@ -93,6 +93,7 @@ class SpawnSubagentInput:
     run_dir: str = ""
     step_index: int = 0
     mcp_config_path: str | None = None
+    cli_timeout_seconds: float = 3600.0
 
 
 _sdk_singleton: AnthropicSdkTransport | None = None
@@ -214,7 +215,8 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
     effective_max_tokens = min(inp.max_tokens, _MAX_TOKENS_BY_TIER.get(effective_tier_name, 128_000))
     sdk = _get_sdk()
     cli = _get_cli()
-    label = f"{inp.role}:{prompt_path.stem}"
+    run_id = Path(inp.run_dir).name if inp.run_dir else "unknown"
+    label = f"{run_id}/{inp.role}:{prompt_path.stem}"
     request = SubagentRequest(
         role=inp.role,
         tier=tier,
@@ -225,6 +227,7 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
         label=label,
         output_schema=inp.output_schema,
         mcp_config_path=inp.mcp_config_path,
+        cli_timeout_seconds=inp.cli_timeout_seconds,
     )
 
     beat_task: asyncio.Task[None] | None = None

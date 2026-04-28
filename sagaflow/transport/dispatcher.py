@@ -17,7 +17,7 @@ class SubagentRequest:
     max_tokens: int
     tools_needed: bool
     label: str = ""
-    cli_timeout_seconds: float = 900.0
+    cli_timeout_seconds: float = 3600.0
     output_schema: dict | None = None
     mcp_config_path: str | None = None
 
