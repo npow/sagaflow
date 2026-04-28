@@ -459,6 +459,7 @@ async def run_worker(*, target: str = DEFAULT_TARGET) -> None:
         workflows=workflows,
         activities=all_activities,
         workflow_runner=_build_sandbox_runner(),
+        max_concurrent_activities=200,
         debug_mode=True,
     )
     await worker.run()
