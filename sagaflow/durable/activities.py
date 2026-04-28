@@ -184,6 +184,8 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
         )
 
     tier = ModelTier[inp.tier_name]
+    _MAX_TOKENS_BY_TIER = {"HAIKU": 8192, "SONNET": 128_000, "OPUS": 128_000}
+    effective_max_tokens = min(inp.max_tokens, _MAX_TOKENS_BY_TIER.get(inp.tier_name, 128_000))
     sdk = _get_sdk()
     cli = _get_cli()
     label = f"{inp.role}:{prompt_path.stem}"
@@ -192,7 +194,7 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
         tier=tier,
         system_prompt=inp.system_prompt,
         user_prompt=user_prompt,
-        max_tokens=inp.max_tokens,
+        max_tokens=effective_max_tokens,
         tools_needed=inp.tools_needed,
         label=label,
         output_schema=inp.output_schema,
