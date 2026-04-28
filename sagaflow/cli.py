@@ -1821,5 +1821,127 @@ def portfolio_regress(baseline: str, threshold: float) -> None:
         click.echo(f"No regressions (threshold={threshold}, baseline={baseline}).")
 
 
+@main.group()
+def memory() -> None:
+    """Cross-session skill memory: outcomes, recall, patterns."""
+
+
+def _get_memory_db() -> "SkillMemoryDB":  # type: ignore[name-defined]
+    from sagaflow.memory.db import SkillMemoryDB
+    return SkillMemoryDB.open()
+
+
+@memory.command(name="list")
+@click.option("--skill", default=None, help="Filter by skill name.")
+@click.option("--limit", default=20, type=int, help="Max outcomes to show.")
+def memory_list(skill: str | None, limit: int) -> None:
+    """List recent outcome records."""
+    db = _get_memory_db()
+    try:
+        outcomes = db.list_outcomes(skill=skill, limit=limit)
+    finally:
+        db.close()
+    if not outcomes:
+        click.echo("no outcomes recorded")
+        return
+    click.echo(f"{'RUN_ID':<45} {'SKILL':<20} {'LABEL':<18} {'DUR':>6} {'COST':>8}")
+    click.echo("-" * 100)
+    for o in outcomes:
+        cost_str = f"${o.cost_usd:.2f}" if o.cost_usd else "-"
+        click.echo(
+            f"{o.run_id:<45} {o.skill:<20} {o.terminal_label:<18} "
+            f"{o.duration_s:>5.0f}s {cost_str:>8}"
+        )
+
+
+@memory.command(name="show")
+@click.argument("run_id")
+def memory_show(run_id: str) -> None:
+    """Show full details for a single outcome."""
+    db = _get_memory_db()
+    try:
+        o = db.get_outcome(run_id)
+    finally:
+        db.close()
+    if not o:
+        click.echo(f"outcome {run_id!r} not found")
+        return
+    click.echo(f"Run ID:     {o.run_id}")
+    click.echo(f"Skill:      {o.skill}")
+    click.echo(f"Label:      {o.terminal_label}")
+    click.echo(f"Started:    {o.started_at}")
+    click.echo(f"Completed:  {o.completed_at}")
+    click.echo(f"Duration:   {o.duration_s:.0f}s")
+    cost_str = f"${o.cost_usd:.2f}" if o.cost_usd else "-"
+    click.echo(f"Cost:       {cost_str}")
+    if o.input_tokens or o.output_tokens:
+        click.echo(f"Tokens:     {o.input_tokens or 0} in / {o.output_tokens or 0} out")
+    if o.input_hash:
+        click.echo(f"Input hash: {o.input_hash}")
+    if o.primary_artifact:
+        click.echo(f"Artifact:   {o.primary_artifact}")
+    if o.sagaflow_version:
+        click.echo(f"Version:    {o.sagaflow_version}")
+    if o.findings_text:
+        click.echo(f"\nFindings:\n{o.findings_text[:1000]}")
+
+
+@memory.command(name="search")
+@click.argument("query")
+@click.option("--skill", default=None, help="Filter by skill name.")
+@click.option("--limit", default=10, type=int, help="Max results.")
+def memory_search(query: str, skill: str | None, limit: int) -> None:
+    """Full-text search across outcome findings."""
+    db = _get_memory_db()
+    try:
+        results = db.query_outcomes(query=query, skill=skill, limit=limit)
+    finally:
+        db.close()
+    if not results:
+        click.echo("no matches")
+        return
+    for o in results:
+        click.echo(f"  {o.run_id:<40} {o.skill:<16} {o.findings_text[:80]}")
+
+
+@memory.command(name="patterns")
+@click.option("--skill", default=None, help="Filter by skill.")
+@click.option("--min-freq", default=1, type=int, help="Minimum frequency.")
+def memory_patterns(skill: str | None, min_freq: int) -> None:
+    """List promoted patterns."""
+    db = _get_memory_db()
+    try:
+        pats = db.query_patterns(skill=skill, min_frequency=min_freq)
+    finally:
+        db.close()
+    if not pats:
+        click.echo("no patterns")
+        return
+    click.echo(f"{'SKILL':<20} {'TYPE':<16} {'KEY':<30} {'FREQ':>5} {'CONF':<8}")
+    for p in pats:
+        click.echo(f"{p.skill:<20} {p.pattern_type:<16} {p.pattern_key:<30} {p.frequency:>5} {p.confidence:<8}")
+
+
+@memory.command(name="stats")
+def memory_stats() -> None:
+    """Show memory database statistics."""
+    db = _get_memory_db()
+    try:
+        total = db.count_outcomes()
+        skills: dict[str, int] = {}
+        for o in db.list_outcomes(limit=10000):
+            skills[o.skill] = skills.get(o.skill, 0) + 1
+        patterns = db.query_patterns()
+    finally:
+        db.close()
+    click.echo(f"Total outcomes: {total}")
+    click.echo(f"Distinct skills: {len(skills)}")
+    if skills:
+        click.echo("\nOutcomes per skill:")
+        for sk, count in sorted(skills.items(), key=lambda x: -x[1]):
+            click.echo(f"  {sk:<30} {count}")
+    click.echo(f"\nPatterns: {len(patterns)}")
+
+
 if __name__ == "__main__":
     main()
