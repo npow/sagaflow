@@ -9,7 +9,7 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 from temporalio.worker.workflow_sandbox import SandboxRestrictions, SandboxedWorkflowRunner
 
-from sagaflow.durable.activities import SpawnSubagentInput, emit_finding, write_artifact
+from sagaflow.durable.activities import SpawnSubagentInput, emit_finding, finalize_manifest_activity, write_artifact
 from sagaflow.temporal_client import TASK_QUEUE
 from skills.deep_research.workflow import DeepResearchInput, DeepResearchWorkflow
 
@@ -113,7 +113,7 @@ async def _run(inp: DeepResearchInput) -> str:
             env.client,
             task_queue=TASK_QUEUE,
             workflows=[DeepResearchWorkflow],
-            activities=[write_artifact, emit_finding, _fake],
+            activities=[write_artifact, emit_finding, finalize_manifest_activity, _fake],
             workflow_runner=_SANDBOX,
         ):
             return await env.client.execute_workflow(
@@ -172,7 +172,7 @@ async def test_novelty_cold_start_triggers_bootstrap(tmp_path) -> None:
             env.client,
             task_queue=TASK_QUEUE,
             workflows=[DeepResearchWorkflow],
-            activities=[write_artifact, emit_finding, _fake_cold],
+            activities=[write_artifact, emit_finding, finalize_manifest_activity, _fake_cold],
             workflow_runner=_SANDBOX,
         ):
             result = await env.client.execute_workflow(
@@ -212,7 +212,7 @@ async def test_familiar_novelty_skips_bootstrap(tmp_path) -> None:
             env.client,
             task_queue=TASK_QUEUE,
             workflows=[DeepResearchWorkflow],
-            activities=[write_artifact, emit_finding, _fake_familiar],
+            activities=[write_artifact, emit_finding, finalize_manifest_activity, _fake_familiar],
             workflow_runner=_SANDBOX,
         ):
             await env.client.execute_workflow(
@@ -335,7 +335,7 @@ async def test_termination_label_budget_gate(tmp_path) -> None:
             env.client,
             task_queue=TASK_QUEUE,
             workflows=[DeepResearchWorkflow],
-            activities=[write_artifact, emit_finding, _fake_many_dirs],
+            activities=[write_artifact, emit_finding, finalize_manifest_activity, _fake_many_dirs],
             workflow_runner=_SANDBOX,
         ):
             result = await env.client.execute_workflow(
@@ -373,7 +373,7 @@ async def test_absolute_hard_stop(tmp_path) -> None:
             env.client,
             task_queue=TASK_QUEUE,
             workflows=[DeepResearchWorkflow],
-            activities=[write_artifact, emit_finding, _fake_infinite],
+            activities=[write_artifact, emit_finding, finalize_manifest_activity, _fake_infinite],
             workflow_runner=_SANDBOX,
         ):
             await env.client.execute_workflow(
@@ -429,7 +429,7 @@ async def test_novelty_two_verified_sources_downgrades(tmp_path) -> None:
             env.client,
             task_queue=TASK_QUEUE,
             workflows=[DeepResearchWorkflow],
-            activities=[write_artifact, emit_finding, _fake_downgrade],
+            activities=[write_artifact, emit_finding, finalize_manifest_activity, _fake_downgrade],
             workflow_runner=_SANDBOX,
         ):
             await env.client.execute_workflow(
@@ -493,7 +493,7 @@ async def test_year_range_in_novelty_sources_no_crash(tmp_path) -> None:
             env.client,
             task_queue=TASK_QUEUE,
             workflows=[DeepResearchWorkflow],
-            activities=[write_artifact, emit_finding, _fake_bad_year],
+            activities=[write_artifact, emit_finding, finalize_manifest_activity, _fake_bad_year],
             workflow_runner=_SANDBOX,
         ):
             await env.client.execute_workflow(
@@ -533,7 +533,7 @@ async def test_sub_direction_generation_replenishes_frontier(tmp_path) -> None:
             env.client,
             task_queue=TASK_QUEUE,
             workflows=[DeepResearchWorkflow],
-            activities=[write_artifact, emit_finding, _fake_with_expansion],
+            activities=[write_artifact, emit_finding, finalize_manifest_activity, _fake_with_expansion],
             workflow_runner=_SANDBOX,
         ):
             await env.client.execute_workflow(
@@ -571,7 +571,7 @@ async def test_malformed_direction_json_no_crash(tmp_path) -> None:
             env.client,
             task_queue=TASK_QUEUE,
             workflows=[DeepResearchWorkflow],
-            activities=[write_artifact, emit_finding, _fake_bad_json],
+            activities=[write_artifact, emit_finding, finalize_manifest_activity, _fake_bad_json],
             workflow_runner=_SANDBOX,
         ):
             await env.client.execute_workflow(
@@ -607,7 +607,7 @@ async def test_partial_researcher_failure_still_writes_successful_findings(tmp_p
             env.client,
             task_queue=TASK_QUEUE,
             workflows=[DeepResearchWorkflow],
-            activities=[write_artifact, emit_finding, _fake_one_fails],
+            activities=[write_artifact, emit_finding, finalize_manifest_activity, _fake_one_fails],
             workflow_runner=_SANDBOX,
         ):
             await env.client.execute_workflow(
@@ -644,7 +644,7 @@ async def test_progress_json_tracks_researcher_status(tmp_path) -> None:
             env.client,
             task_queue=TASK_QUEUE,
             workflows=[DeepResearchWorkflow],
-            activities=[write_artifact, emit_finding, _fake_no_expand],
+            activities=[write_artifact, emit_finding, finalize_manifest_activity, _fake_no_expand],
             workflow_runner=_SANDBOX,
         ):
             await env.client.execute_workflow(
@@ -688,7 +688,7 @@ async def test_expansion_direction_ids_use_next_round(tmp_path) -> None:
             env.client,
             task_queue=TASK_QUEUE,
             workflows=[DeepResearchWorkflow],
-            activities=[write_artifact, emit_finding, _fake_with_expansion],
+            activities=[write_artifact, emit_finding, finalize_manifest_activity, _fake_with_expansion],
             workflow_runner=_SANDBOX,
         ):
             await env.client.execute_workflow(

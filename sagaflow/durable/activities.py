@@ -183,9 +183,24 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
             prompt_path,
         )
 
-    tier = ModelTier[inp.tier_name]
+    effective_tier_name = inp.tier_name
+    _budget_enforcer = None
+    if inp.run_dir:
+        from sagaflow.budget.registry import get_enforcer as _get_enforcer
+        try:
+            _budget_enforcer = _get_enforcer(activity.info().workflow_id)
+        except Exception:
+            pass
+        if _budget_enforcer:
+            from sagaflow.budget.enforcer import BudgetExceededError
+            resolved_tier, _bstatus = _budget_enforcer.pre_dispatch(inp.role, inp.tier_name)
+            if _bstatus.decision.value == "abort":
+                raise BudgetExceededError(_bstatus.message)
+            effective_tier_name = resolved_tier
+
+    tier = ModelTier[effective_tier_name]
     _MAX_TOKENS_BY_TIER = {"HAIKU": 8192, "SONNET": 128_000, "OPUS": 128_000}
-    effective_max_tokens = min(inp.max_tokens, _MAX_TOKENS_BY_TIER.get(inp.tier_name, 128_000))
+    effective_max_tokens = min(inp.max_tokens, _MAX_TOKENS_BY_TIER.get(effective_tier_name, 128_000))
     sdk = _get_sdk()
     cli = _get_cli()
     label = f"{inp.role}:{prompt_path.stem}"
@@ -217,6 +232,28 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
                 await beat_task
     elapsed = round(time.monotonic() - t0, 1)
 
+    if _budget_enforcer:
+        from sagaflow.cost import estimate_cost_from_result
+        step_cost = estimate_cost_from_result({
+            "_input_tokens": str(dr.input_tokens),
+            "_output_tokens": str(dr.output_tokens),
+            "_model": dr.model,
+        })
+        newly_crossed = _budget_enforcer.record_cost(step_cost)
+        if newly_crossed and inp.run_dir:
+            from sagaflow.budget.alerts import fire_threshold_alert
+            from sagaflow.slack_progress import _read_progress_file
+            routing = _read_progress_file(inp.run_dir) or {}
+            for threshold in newly_crossed:
+                fire_threshold_alert(
+                    threshold=threshold,
+                    accumulated_cost_usd=_budget_enforcer.ledger.accumulated_cost_usd,
+                    max_cost_usd=_budget_enforcer.ledger.policy.max_cost_usd or 0.0,
+                    run_id=Path(inp.run_dir).name,
+                    slack_channel=routing.get("channel"),
+                    slack_thread_ts=routing.get("thread_ts"),
+                )
+
     if inp.run_dir:
         from sagaflow.manifest import StepRecord, append_step as _append_step
         _append_step(
@@ -225,7 +262,7 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
                 step=inp.step_index,
                 role=inp.role,
                 model=dr.model,
-                tier=inp.tier_name,
+                tier=effective_tier_name,
                 input_tokens=dr.input_tokens,
                 output_tokens=dr.output_tokens,
                 duration_seconds=elapsed,
@@ -241,13 +278,29 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
         "_model": dr.model,
     }
 
+    def _record_cassette(output: dict[str, str]) -> None:
+        if not inp.run_dir:
+            return
+        try:
+            from sagaflow.replay.cassette import hash_input, record_entry
+            record_entry(
+                run_dir=Path(inp.run_dir),
+                run_id=Path(inp.run_dir).name,
+                skill=activity.info().workflow_type or "",
+                activity_name="spawn_subagent",
+                role=inp.role,
+                tier=effective_tier_name,
+                input_hash=hash_input(inp.role, inp.system_prompt, user_prompt),
+                output=output,
+                duration_seconds=elapsed,
+            )
+        except Exception:
+            logger.debug("cassette record failed", exc_info=True)
+
     if inp.output_schema is not None:
         import json
         parsed = _extract_json_object(raw)
         if parsed is not None:
-            # JSON-serialize non-string values BEFORE validate_boundary,
-            # which converts non-strings via str() (Python repr with single
-            # quotes that breaks downstream json.loads).
             for k, v in list(parsed.items()):
                 if not isinstance(v, str):
                     parsed[k] = json.dumps(v)
@@ -257,13 +310,16 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
                 parsed["_boundary_truncated"] = ",".join(br.truncated_fields)
                 logger.error("TRUNCATED fields in %s: %s", label, br.truncated_fields)
             parsed.update(_token_meta)
+            _record_cassette(parsed)
             return parsed
         logger.warning(
             "Schema-constrained response not valid JSON after extraction attempts "
             "(label=%s, role=%s, raw_len=%d, raw_head=%.200s)",
             label, inp.role, len(raw) if raw else 0, (raw or "")[:200],
         )
-        return {MALFORMED_SENTINEL: "1", "_error": "no valid JSON found", "_raw": raw[:2000], **_token_meta}
+        result = {MALFORMED_SENTINEL: "1", "_error": "no valid JSON found", "_raw": raw[:2000], **_token_meta}
+        _record_cassette(result)
+        return result
 
     try:
         parsed = parse_structured(raw)
@@ -272,6 +328,7 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
             parsed["_boundary_truncated"] = ",".join(br.truncated_fields)
             logger.error("TRUNCATED fields in %s: %s", label, br.truncated_fields)
         parsed.update(_token_meta)
+        _record_cassette(parsed)
         return parsed
     except MalformedResponseError as exc:
         truncated_raw = raw[:2000] if isinstance(raw, str) else ""
@@ -290,13 +347,15 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
             raw_path = str(dump)
         except OSError:
             pass
-        return {
+        result = {
             MALFORMED_SENTINEL: "1",
             "_error": str(exc),
             "_raw": truncated_raw,
             "_raw_path": raw_path,
             **_token_meta,
         }
+        _record_cassette(result)
+        return result
 
 
 @dataclass(frozen=True)

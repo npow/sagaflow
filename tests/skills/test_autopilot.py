@@ -15,7 +15,7 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 from temporalio.worker.workflow_sandbox import SandboxRestrictions, SandboxedWorkflowRunner
 
-from sagaflow.durable.activities import SpawnSubagentInput, emit_finding, write_artifact
+from sagaflow.durable.activities import SpawnSubagentInput, emit_finding, finalize_manifest_activity, write_artifact
 from sagaflow.temporal_client import TASK_QUEUE
 from skills.autopilot.workflow import AutopilotInput, AutopilotWorkflow
 from skills.deep_plan.workflow import DeepPlanWorkflow
@@ -141,7 +141,7 @@ async def test_autopilot_happy_path(tmp_path) -> None:
                 DeepQaWorkflow,
                 LoopUntilDoneWorkflow,
             ],
-            activities=[write_artifact, emit_finding, _fake, read_text_file],
+            activities=[write_artifact, emit_finding, finalize_manifest_activity, _fake, read_text_file],
             workflow_runner=_SANDBOX,
         ):
             result = await env.client.execute_workflow(
@@ -178,7 +178,7 @@ async def test_autopilot_budget_exhausted(tmp_path) -> None:
                 DeepQaWorkflow,
                 LoopUntilDoneWorkflow,
             ],
-            activities=[write_artifact, emit_finding, _fake, read_text_file],
+            activities=[write_artifact, emit_finding, finalize_manifest_activity, _fake, read_text_file],
             workflow_runner=_SANDBOX,
         ):
             result = await env.client.execute_workflow(

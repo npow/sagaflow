@@ -19,7 +19,7 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 from temporalio.worker.workflow_sandbox import SandboxRestrictions, SandboxedWorkflowRunner
 
-from sagaflow.durable.activities import SpawnSubagentInput, emit_finding, write_artifact
+from sagaflow.durable.activities import SpawnSubagentInput, emit_finding, finalize_manifest_activity, write_artifact
 from sagaflow.temporal_client import TASK_QUEUE
 from skills.deep_debug.workflow import DeepDebugInput, DeepDebugWorkflow
 
@@ -51,7 +51,7 @@ async def _run_workflow(env, fake_activity, inp: DeepDebugInput) -> str:
         env.client,
         task_queue=TASK_QUEUE,
         workflows=[DeepDebugWorkflow],
-        activities=[write_artifact, emit_finding, fake_activity],
+        activities=[write_artifact, emit_finding, finalize_manifest_activity, fake_activity],
         workflow_runner=SandboxedWorkflowRunner(restrictions=_PASSTHROUGH),
     ):
         return await env.client.execute_workflow(

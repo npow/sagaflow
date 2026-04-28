@@ -14,7 +14,7 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 from temporalio.worker.workflow_sandbox import SandboxRestrictions, SandboxedWorkflowRunner
 
-from sagaflow.durable.activities import SpawnSubagentInput, emit_finding, write_artifact
+from sagaflow.durable.activities import SpawnSubagentInput, emit_finding, finalize_manifest_activity, write_artifact
 from sagaflow.temporal_client import TASK_QUEUE
 from skills.flaky_test_diagnoser.workflow import FlakyTestInput, FlakyTestWorkflow
 
@@ -103,7 +103,7 @@ async def test_flaky_test_diagnoser_roundtrip(tmp_path) -> None:
             workflows=[FlakyTestWorkflow],
             activities=[
                 write_artifact,
-                emit_finding,
+                emit_finding, finalize_manifest_activity,
                 _fake_spawn_subagent,
                 fake_run,
             ],
@@ -162,7 +162,7 @@ async def test_flaky_test_diagnoser_not_reproduced(tmp_path) -> None:
             workflows=[FlakyTestWorkflow],
             activities=[
                 write_artifact,
-                emit_finding,
+                emit_finding, finalize_manifest_activity,
                 _fake_spawn_subagent,
                 _always_pass,
             ],

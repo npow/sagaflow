@@ -36,6 +36,7 @@ import asyncio
 import json
 from dataclasses import dataclass, field
 from datetime import timedelta
+from pathlib import Path
 
 from temporalio import workflow
 
@@ -95,6 +96,7 @@ class ClaudeSkillInput:
     max_iterations: int = 50
     tier_name: str = "SONNET"  # top-level coordinator tier
     notify: bool = True
+    budget_max_cost_usd: float | None = None
 
 
 @dataclass(frozen=True)
@@ -306,7 +308,41 @@ class ClaudeSkillWorkflow(InterventionMixin):
     @workflow.run
     async def run(self, inp: ClaudeSkillInput) -> str:
         self._init_intervention(inp.run_dir, inp.skill_name)
+        self._budget_enforcer = None
+        wf_id = workflow.info().workflow_id
 
+        if inp.budget_max_cost_usd is not None:
+            from sagaflow.budget.policy import BudgetPolicy
+            from sagaflow.budget.ledger import BudgetLedger
+            from sagaflow.budget.router import TierRouter
+            from sagaflow.budget.enforcer import BudgetEnforcer
+            from sagaflow.budget.registry import register as _budget_register
+
+            policy = BudgetPolicy(max_cost_usd=inp.budget_max_cost_usd)
+            manifest_path = Path(inp.run_dir) / "run_manifest.json" if inp.run_dir else None
+            ledger = BudgetLedger.from_manifest_or_fresh(policy, manifest_path)
+            router = TierRouter(policy)
+            self._budget_enforcer = BudgetEnforcer(ledger, router)
+            _budget_register(wf_id, self._budget_enforcer)
+
+        try:
+            return await self._run_inner(inp)
+        finally:
+            if self._budget_enforcer and inp.run_dir:
+                from sagaflow.budget.registry import unregister as _budget_unregister
+                from sagaflow.manifest import write_budget_result
+                ledger = self._budget_enforcer.ledger
+                write_budget_result(
+                    run_dir=Path(inp.run_dir),
+                    accumulated_cost_usd=ledger.accumulated_cost_usd,
+                    max_cost_usd=ledger.policy.max_cost_usd,
+                    step_count=ledger.step_count,
+                    alerts_fired=sorted(ledger.alerts_fired),
+                    final_decision=ledger.check().decision.value,
+                )
+                _budget_unregister(wf_id)
+
+    async def _run_inner(self, inp: ClaudeSkillInput) -> str:
         system_prompt = _build_system_prompt(
             inp.skill_md_content, inp.run_dir, inp.inbox_path
         )

@@ -14,7 +14,7 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 from temporalio.worker.workflow_sandbox import SandboxRestrictions, SandboxedWorkflowRunner
 
-from sagaflow.durable.activities import SpawnSubagentInput, emit_finding, write_artifact
+from sagaflow.durable.activities import SpawnSubagentInput, emit_finding, finalize_manifest_activity, write_artifact
 from sagaflow.temporal_client import TASK_QUEUE
 from skills.proposal_reviewer.workflow import ProposalReviewInput, ProposalReviewWorkflow
 
@@ -57,7 +57,7 @@ async def test_proposal_reviewer_roundtrip_produces_report(tmp_path) -> None:
             env.client,
             task_queue=TASK_QUEUE,
             workflows=[ProposalReviewWorkflow],
-            activities=[write_artifact, emit_finding, _fake_spawn_subagent],
+            activities=[write_artifact, emit_finding, finalize_manifest_activity, _fake_spawn_subagent],
             workflow_runner=SandboxedWorkflowRunner(
                 restrictions=SandboxRestrictions.default.with_passthrough_modules(
                     "httpx", "anthropic", "sagaflow", "pydantic", "skills", "claude_skill_"
@@ -122,7 +122,7 @@ async def test_proposal_reviewer_four_critics_all_called(tmp_path) -> None:
             env.client,
             task_queue=TASK_QUEUE,
             workflows=[ProposalReviewWorkflow],
-            activities=[write_artifact, emit_finding, _tracking_fake],
+            activities=[write_artifact, emit_finding, finalize_manifest_activity, _tracking_fake],
             workflow_runner=SandboxedWorkflowRunner(
                 restrictions=SandboxRestrictions.default.with_passthrough_modules(
                     "httpx", "anthropic", "sagaflow", "pydantic", "skills", "claude_skill_"
@@ -171,7 +171,7 @@ async def test_quorum_failure_with_malformed_sentinels_writes_substantive_report
             env.client,
             task_queue=TASK_QUEUE,
             workflows=[ProposalReviewWorkflow],
-            activities=[write_artifact, emit_finding, _malformed_fake],
+            activities=[write_artifact, emit_finding, finalize_manifest_activity, _malformed_fake],
             workflow_runner=SandboxedWorkflowRunner(
                 restrictions=SandboxRestrictions.default.with_passthrough_modules(
                     "httpx", "anthropic", "sagaflow", "pydantic", "skills", "claude_skill_"

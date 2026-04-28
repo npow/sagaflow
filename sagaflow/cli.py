@@ -579,6 +579,149 @@ def mission_abort(workflow_id: str, reason: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# chain subcommands — multi-skill pipeline orchestration
+# ---------------------------------------------------------------------------
+
+
+@main.group()
+def chain() -> None:
+    """Multi-skill pipeline orchestration via chain declarations."""
+
+
+@chain.command(name="launch")
+@click.argument("chain_json", type=click.Path(exists=True, dir_okay=False))
+@click.option("--input", "inputs", multiple=True, help="Chain input as key=value. Repeatable.")
+@click.option("--dry-run", is_flag=True, default=False, help="Validate and print resolved inputs without executing.")
+def chain_launch(chain_json: str, inputs: tuple[str, ...], dry_run: bool) -> None:
+    """Start a ChainWorkflow from a chain declaration JSON file."""
+    import asyncio as _a
+    import json as _json
+    from datetime import datetime, timedelta
+    from pathlib import Path as _Path
+
+    from sagaflow.paths import Paths
+    from sagaflow.prompts import claude_skills_dir
+    from sagaflow.temporal_client import TASK_QUEUE, connect
+
+    chain_path = _Path(chain_json).resolve()
+    try:
+        decl = _json.loads(chain_path.read_text(encoding="utf-8"))
+    except (OSError, _json.JSONDecodeError) as exc:
+        click.echo(f"error: cannot read chain declaration: {exc}", err=True)
+        sys.exit(1)
+
+    if not isinstance(decl, dict):
+        click.echo(f"error: chain declaration must be a JSON object, got {type(decl).__name__}", err=True)
+        sys.exit(1)
+
+    chain_id = decl.get("chain_id", chain_path.stem)
+    chain_version = decl.get("version", 1)
+
+    chain_input: dict[str, str] = {}
+    for kv in inputs:
+        if "=" not in kv:
+            click.echo(f"error: --input must be key=value, got {kv!r}", err=True)
+            sys.exit(1)
+        k, v = kv.split("=", 1)
+        chain_input[k] = v
+
+    paths = Paths.from_env()
+    run_id = f"chain-{chain_id}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    run_dir = paths.run_dir_for(run_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    from sagaflow.durable.chain_workflow import ChainWorkflow, ChainWorkflowInput
+
+    inp = ChainWorkflowInput(
+        chain_id=chain_id,
+        chain_version=chain_version,
+        run_dir=str(run_dir),
+        chain_input=chain_input,
+        initiated_by="cli",
+        dry_run=dry_run,
+        inbox_path=str(paths.inbox),
+        skills_dir=str(claude_skills_dir()),
+        chains_dir=str(chain_path.parent),
+    )
+
+    async def _go() -> str:
+        client = await connect()
+        handle = await client.start_workflow(
+            ChainWorkflow.run,
+            args=[inp],
+            id=f"sagaflow-{run_id}",
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(hours=4),
+        )
+        return handle.id
+
+    _preflight_all()
+    _ensure_worker_running()
+    workflow_id = _a.run(_go())
+    click.echo(f"chain={chain_id} run_id={run_id} workflow_id={workflow_id}")
+    if dry_run:
+        click.echo("(dry-run mode — chain will validate and exit without executing skills)")
+
+
+@chain.command(name="status")
+@click.argument("run_id")
+def chain_status(run_id: str) -> None:
+    """Show chain progress from CHAIN_STATUS.json."""
+    import json as _json
+
+    from sagaflow.paths import Paths
+
+    paths = Paths.from_env()
+    status_file = paths.run_dir_for(run_id) / "CHAIN_STATUS.json"
+    if not status_file.exists():
+        click.echo(f"error: no CHAIN_STATUS.json for run {run_id!r}", err=True)
+        click.echo(f"  expected at: {status_file}", err=True)
+        sys.exit(1)
+
+    try:
+        status = _json.loads(status_file.read_text(encoding="utf-8"))
+    except (OSError, _json.JSONDecodeError) as exc:
+        click.echo(f"error: cannot read status file: {exc}", err=True)
+        sys.exit(1)
+
+    click.echo(_json.dumps(status, indent=2, default=str))
+
+
+@chain.command(name="list")
+@click.option("--dir", "chains_dir", type=click.Path(exists=True, file_okay=False), default=None,
+              help="Directory to scan for chain declarations. Defaults to ~/.claude/skills/_chains/.")
+def chain_list(chains_dir: str | None) -> None:
+    """List available chain declarations."""
+    import json as _json
+    from pathlib import Path as _Path
+
+    if chains_dir:
+        scan_dir = _Path(chains_dir)
+    else:
+        from sagaflow.prompts import claude_skills_dir
+        scan_dir = claude_skills_dir() / "_chains"
+
+    if not scan_dir.is_dir():
+        click.echo(f"No chains directory found at {scan_dir}")
+        return
+
+    found = 0
+    for f in sorted(scan_dir.glob("*.json")):
+        try:
+            decl = _json.loads(f.read_text(encoding="utf-8"))
+            cid = decl.get("chain_id", f.stem)
+            desc = decl.get("description", "")
+            steps = decl.get("steps", [])
+            click.echo(f"  {cid}  ({len(steps)} steps)  {desc}")
+            found += 1
+        except (OSError, _json.JSONDecodeError):
+            click.echo(f"  {f.name}  (invalid JSON)", err=True)
+
+    if not found:
+        click.echo(f"No chain declarations found in {scan_dir}")
+
+
+# ---------------------------------------------------------------------------
 # Intervention commands — pause / resume / inject / takeover / abort / status
 # ---------------------------------------------------------------------------
 
@@ -1141,10 +1284,13 @@ def test_run(skill: str | None, tag: str | None, save_path: str | None, verbose:
     if tag:
         cmd.extend(["-k", tag])
 
+    if save_path:
+        cmd.extend(["--scenario-report", save_path])
+
     result = subprocess.run(cmd, cwd=str(Path(__file__).resolve().parent.parent))
 
-    if save_path:
-        click.echo(f"(report saving requires pytest plugin — use --save with pytest-json-report)")
+    if save_path and Path(save_path).exists():
+        click.echo(f"Report saved to {save_path}")
 
     sys.exit(result.returncode)
 
@@ -1170,6 +1316,509 @@ def test_compare(baseline: str, current: str) -> None:
     )
     if diff["has_regressions"]:
         raise SystemExit(1)
+
+
+@main.group()
+def cost() -> None:
+    """Budget and cost reporting for sagaflow runs."""
+
+
+@cost.command("runs")
+@click.option("--limit", default=20, help="Max runs to show.")
+@click.option("--skill", default=None, help="Filter by skill name.")
+@click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text")
+def cost_runs(limit: int, skill: str | None, fmt: str) -> None:
+    """Show cost breakdown per run (most recent first)."""
+    import json as _json
+
+    from sagaflow.paths import Paths
+
+    runs_dir = Paths.from_env().runs_dir
+    if not runs_dir.exists():
+        click.echo("no runs found")
+        return
+
+    rows: list[dict] = []
+    for d in sorted(runs_dir.iterdir(), reverse=True):
+        mf = d / "run_manifest.json"
+        if not mf.exists():
+            continue
+        data = _json.loads(mf.read_text())
+        if skill and data.get("skill") != skill:
+            continue
+        c = data.get("cost", {})
+        rows.append({
+            "run_id": data.get("run_id", d.name),
+            "skill": data.get("skill", ""),
+            "status": data.get("status", ""),
+            "cost_usd": c.get("estimated_cost_usd", 0.0),
+            "input_tokens": c.get("total_input_tokens", 0),
+            "output_tokens": c.get("total_output_tokens", 0),
+            "steps": len(data.get("steps", [])),
+        })
+        if len(rows) >= limit:
+            break
+
+    if not rows:
+        click.echo("no runs with cost data")
+        return
+
+    if fmt == "json":
+        click.echo(_json.dumps(rows, indent=2))
+        return
+
+    click.echo(f"{'RUN ID':<45} {'SKILL':<20} {'COST':>10} {'STEPS':>6} {'STATUS':<10}")
+    click.echo("-" * 95)
+    total = 0.0
+    for r in rows:
+        total += r["cost_usd"]
+        click.echo(
+            f"{r['run_id']:<45} {r['skill']:<20} "
+            f"${r['cost_usd']:>8.4f} {r['steps']:>6} {r['status']:<10}"
+        )
+    click.echo("-" * 95)
+    click.echo(f"{'TOTAL':<45} {'':<20} ${total:>8.4f}")
+
+
+@cost.command("skills")
+@click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text")
+def cost_skills(fmt: str) -> None:
+    """Aggregate cost by skill across all runs."""
+    import json as _json
+    from collections import defaultdict
+
+    from sagaflow.paths import Paths
+
+    runs_dir = Paths.from_env().runs_dir
+    if not runs_dir.exists():
+        click.echo("no runs found")
+        return
+
+    agg: dict[str, dict] = defaultdict(lambda: {
+        "runs": 0, "cost_usd": 0.0, "input_tokens": 0, "output_tokens": 0,
+    })
+    for d in runs_dir.iterdir():
+        mf = d / "run_manifest.json"
+        if not mf.exists():
+            continue
+        data = _json.loads(mf.read_text())
+        sk = data.get("skill", "unknown")
+        c = data.get("cost", {})
+        entry = agg[sk]
+        entry["runs"] += 1
+        entry["cost_usd"] += c.get("estimated_cost_usd", 0.0)
+        entry["input_tokens"] += c.get("total_input_tokens", 0)
+        entry["output_tokens"] += c.get("total_output_tokens", 0)
+
+    if not agg:
+        click.echo("no runs with cost data")
+        return
+
+    rows = sorted(agg.items(), key=lambda x: x[1]["cost_usd"], reverse=True)
+
+    if fmt == "json":
+        click.echo(_json.dumps({k: v for k, v in rows}, indent=2))
+        return
+
+    click.echo(f"{'SKILL':<30} {'RUNS':>6} {'TOTAL COST':>12} {'AVG COST':>10}")
+    click.echo("-" * 62)
+    for sk, v in rows:
+        avg = v["cost_usd"] / v["runs"] if v["runs"] else 0
+        click.echo(f"{sk:<30} {v['runs']:>6} ${v['cost_usd']:>10.4f} ${avg:>8.4f}")
+
+
+@cost.command("top")
+@click.option("-n", default=10, help="Number of runs to show.")
+def cost_top(n: int) -> None:
+    """Show the N most expensive runs."""
+    import json as _json
+
+    from sagaflow.paths import Paths
+
+    runs_dir = Paths.from_env().runs_dir
+    if not runs_dir.exists():
+        click.echo("no runs found")
+        return
+
+    entries: list[tuple[float, str, str]] = []
+    for d in runs_dir.iterdir():
+        mf = d / "run_manifest.json"
+        if not mf.exists():
+            continue
+        data = _json.loads(mf.read_text())
+        c = data.get("cost", {}).get("estimated_cost_usd", 0.0)
+        entries.append((c, data.get("run_id", d.name), data.get("skill", "")))
+
+    entries.sort(reverse=True)
+
+    click.echo(f"{'#':>3} {'RUN ID':<45} {'SKILL':<20} {'COST':>10}")
+    click.echo("-" * 82)
+    for i, (c, rid, sk) in enumerate(entries[:n], 1):
+        click.echo(f"{i:>3} {rid:<45} {sk:<20} ${c:>8.4f}")
+
+
+@cost.command("daily")
+@click.option("--days", default=7, help="Number of days to show.")
+@click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text")
+def cost_daily(days: int, fmt: str) -> None:
+    """Show daily cost aggregation."""
+    import json as _json
+    import re
+    from collections import defaultdict
+
+    from sagaflow.paths import Paths
+
+    runs_dir = Paths.from_env().runs_dir
+    if not runs_dir.exists():
+        click.echo("no runs found")
+        return
+
+    daily: dict[str, dict] = defaultdict(lambda: {"runs": 0, "cost_usd": 0.0})
+    date_re = re.compile(r"\d{8}")
+
+    for d in runs_dir.iterdir():
+        mf = d / "run_manifest.json"
+        if not mf.exists():
+            continue
+        data = _json.loads(mf.read_text())
+        m = date_re.search(d.name)
+        day = f"{m.group()[:4]}-{m.group()[4:6]}-{m.group()[6:8]}" if m else "unknown"
+        c = data.get("cost", {}).get("estimated_cost_usd", 0.0)
+        daily[day]["runs"] += 1
+        daily[day]["cost_usd"] += c
+
+    rows = sorted(daily.items(), reverse=True)[:days]
+
+    if fmt == "json":
+        click.echo(_json.dumps({k: v for k, v in rows}, indent=2))
+        return
+
+    click.echo(f"{'DATE':<12} {'RUNS':>6} {'COST':>12}")
+    click.echo("-" * 34)
+    total = 0.0
+    for day, v in rows:
+        total += v["cost_usd"]
+        click.echo(f"{day:<12} {v['runs']:>6} ${v['cost_usd']:>10.4f}")
+    click.echo("-" * 34)
+    click.echo(f"{'TOTAL':<12} {'':<6} ${total:>10.4f}")
+
+
+@main.group()
+def replay() -> None:
+    """Deterministic replay: record and replay workflow runs without LLM calls."""
+
+
+@replay.command("list")
+@click.option("--limit", default=20, help="Max cassettes to show.")
+def replay_list(limit: int) -> None:
+    """List runs that have recorded cassettes."""
+    from sagaflow.paths import Paths
+    from sagaflow.replay.cassette import list_cassettes
+
+    runs_dir = Paths.from_env().runs_dir
+    cassettes = list_cassettes(runs_dir)
+    if not cassettes:
+        click.echo("no cassettes found")
+        return
+
+    click.echo(f"{'RUN ID':<45} {'SKILL':<20} {'STEPS':>6} {'RECORDED'}")
+    click.echo("-" * 90)
+    for c in cassettes[:limit]:
+        click.echo(
+            f"{c['run_id']:<45} {c['skill']:<20} {c['entries']:>6} {c['recorded_at']}"
+        )
+
+
+@replay.command("show")
+@click.argument("run_id")
+def replay_show(run_id: str) -> None:
+    """Show cassette details for a run."""
+    from sagaflow.paths import Paths
+    from sagaflow.replay.cassette import load
+
+    run_dir = Paths.from_env().run_dir_for(run_id)
+    try:
+        cassette = load(run_dir)
+    except FileNotFoundError:
+        raise click.UsageError(f"no cassette for run {run_id}") from None
+
+    click.echo(f"Run:      {cassette.run_id}")
+    click.echo(f"Skill:    {cassette.skill}")
+    click.echo(f"Recorded: {cassette.recorded_at}")
+    click.echo(f"Entries:  {len(cassette.entries)}")
+    click.echo()
+    click.echo(f"{'#':>3} {'ROLE':<25} {'TIER':<10} {'DURATION':>8} {'INPUT HASH'}")
+    click.echo("-" * 70)
+    for e in cassette.entries:
+        click.echo(
+            f"{e.seq + 1:>3} {e.role:<25} {e.tier:<10} {e.duration_seconds:>7.1f}s {e.input_hash}"
+        )
+
+
+@replay.command("run")
+@click.argument("run_id")
+@click.option("--target", default=None, help="Temporal server address override")
+def replay_run(run_id: str, target: str | None) -> None:
+    """Re-execute a workflow using its recorded cassette (no LLM calls)."""
+    import asyncio as _a
+
+    from sagaflow.paths import Paths
+    from sagaflow.replay.worker import run_replay_worker
+
+    run_dir = Paths.from_env().run_dir_for(run_id)
+    click.echo(f"Starting replay for {run_id} ...")
+    _a.run(run_replay_worker(run_dir, target=target))
+
+
+@main.group()
+def portfolio() -> None:
+    """Portfolio evaluation: ROI scoring, cost analysis, and skill lifecycle."""
+
+
+@portfolio.command("init")
+def portfolio_init() -> None:
+    """Create portfolio.db and apply schema migrations. Safe to re-run."""
+    from sagaflow.portfolio.db import default_db_path, init_db
+
+    path = init_db()
+    click.echo(f"Portfolio DB initialized at {path}")
+
+
+@portfolio.command("summary")
+@click.option("--window", default=90, type=int, help="Scoring window in days.")
+def portfolio_summary(window: int) -> None:
+    """Show ROI summary for all skills."""
+    from sagaflow.portfolio.db import db_exists
+    from sagaflow.portfolio.scorer import ROIScorer
+
+    if not db_exists():
+        click.echo("error: portfolio DB not found. Run 'sagaflow portfolio init' first.", err=True)
+        sys.exit(1)
+
+    scorer = ROIScorer(window_days=window)
+    scores = scorer.score_all()
+    if not scores:
+        click.echo("No invocation data found.")
+        return
+
+    scores.sort(key=lambda s: (s.insufficient_data, -(s.composite or 0)))
+
+    click.echo(
+        f"{'SKILL':<30} {'VERDICT':<22} {'COMPOSITE':>9} {'RUNS':>6} {'LAST USED':<20}"
+    )
+    click.echo("-" * 92)
+    for s in scores:
+        composite_str = f"{s.composite:.3f}" if s.composite is not None else "—"
+        verdict_str = s.verdict.value if s.verdict else "insufficient_data"
+        last_used = s.computed_at.strftime("%Y-%m-%d") if s.computed_at else "—"
+        click.echo(
+            f"{s.skill_name:<30} {verdict_str:<22} {composite_str:>9} "
+            f"{s.sample_count:>6} {last_used:<20}"
+        )
+
+
+@portfolio.command("inspect")
+@click.argument("skill_name")
+@click.option("--window", default=90, type=int, help="Scoring window in days.")
+def portfolio_inspect(skill_name: str, window: int) -> None:
+    """Full drill-down for a single skill's ROI scores."""
+    from sagaflow.portfolio.costs import CostAggregator, TimeWindow
+    from sagaflow.portfolio.db import db_exists
+    from sagaflow.portfolio.retirement import RetirementAdvisor
+    from sagaflow.portfolio.scorer import ROIScorer
+
+    if not db_exists():
+        click.echo("error: portfolio DB not found. Run 'sagaflow portfolio init' first.", err=True)
+        sys.exit(1)
+
+    scorer = ROIScorer(window_days=window)
+    s = scorer.score(skill_name)
+
+    click.echo(f"Skill:      {s.skill_name}")
+    click.echo(f"Verdict:    {s.verdict.value if s.verdict else 'insufficient_data'}")
+    click.echo(f"Composite:  {s.composite:.4f}" if s.composite is not None else "Composite:  —")
+    click.echo(f"Samples:    {s.sample_count} ({'insufficient' if s.insufficient_data else 'sufficient'})")
+    click.echo()
+    click.echo("Sub-scores:")
+    click.echo(f"  usage      (w=0.25): {s.usage_score:.4f}")
+    click.echo(f"  recency    (w=0.20): {s.recency_score:.4f}")
+    click.echo(
+        f"  outcome    (w=0.35): {s.outcome_score:.4f}"
+        if s.outcome_score is not None
+        else "  outcome    (w=0.35): —"
+    )
+    click.echo(
+        f"  cost_eff   (w=0.20): {s.cost_efficiency_score:.4f}"
+        if s.cost_efficiency_score is not None
+        else "  cost_eff   (w=0.20): —"
+    )
+
+    tw = TimeWindow.last_days(window)
+    cost_agg = CostAggregator()
+    cost = cost_agg.cost_for_skill(skill_name, tw)
+    click.echo()
+    click.echo(f"Cost ({window}d): ${cost.total_usd:.4f} total, ${cost.avg_usd_per_run:.4f} avg/run, {cost.run_count} runs")
+
+    advisor = RetirementAdvisor()
+    rec = advisor.recommendation_for(skill_name)
+    if rec:
+        click.echo()
+        click.echo(f"Retirement: {rec.criterion_triggered} → {rec.recommended_transition} ({rec.confidence})")
+        click.echo(f"  {rec.narrative}")
+
+
+@portfolio.command("trends")
+@click.option("--window", default=90, type=int, help="Window in days.")
+@click.option("--skill", default=None, help="Filter to a single skill.")
+@click.option(
+    "--granularity",
+    type=click.Choice(["day", "week", "month"]),
+    default="week",
+    help="Time bucket granularity.",
+)
+def portfolio_trends(window: int, skill: str | None, granularity: str) -> None:
+    """Show cost trends over time."""
+    from sagaflow.portfolio.costs import CostAggregator, TimeWindow
+    from sagaflow.portfolio.db import db_exists
+
+    if not db_exists():
+        click.echo("error: portfolio DB not found. Run 'sagaflow portfolio init' first.", err=True)
+        sys.exit(1)
+
+    tw = TimeWindow.last_days(window)
+    agg = CostAggregator()
+
+    if skill:
+        skills_to_show = [skill]
+    else:
+        by_skill = agg.cost_by_skill(tw)
+        skills_to_show = [name for name, _ in by_skill[:10]]
+
+    for name in skills_to_show:
+        points = agg.cost_trend(name, granularity=granularity, window=tw)
+        if not points:
+            continue
+        click.echo(f"\n{name}:")
+        click.echo(f"  {'PERIOD':<14} {'RUNS':>6} {'COST':>10}")
+        for p in points:
+            click.echo(f"  {p.period_start:<14} {p.run_count:>6} ${p.total_usd:>9.4f}")
+
+
+@portfolio.command("retire")
+@click.argument("skill_name")
+@click.option(
+    "--transition",
+    required=True,
+    type=click.Choice(["deprecated", "deleted"]),
+    help="Target lifecycle state.",
+)
+@click.option("--note", default=None, help="Optional note for the lifecycle event.")
+@click.option("--dry-run", is_flag=True, help="Print what would be written without committing.")
+def portfolio_retire(skill_name: str, transition: str, note: str | None, dry_run: bool) -> None:
+    """Record a retirement lifecycle event for a skill (advisory only)."""
+    from sagaflow.portfolio.db import db_exists, get_connection
+
+    if not db_exists():
+        click.echo("error: portfolio DB not found. Run 'sagaflow portfolio init' first.", err=True)
+        sys.exit(1)
+
+    if dry_run:
+        click.echo(f"[dry-run] Would write lifecycle event: {skill_name} → {transition}")
+        if note:
+            click.echo(f"  note: {note}")
+        return
+
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO lifecycle_events (skill_name, to_state, transition, operator, note) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (skill_name, transition, transition, "cli", note),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    click.echo(f"Lifecycle event recorded: {skill_name} → {transition}")
+
+
+@portfolio.command("snapshot")
+@click.option("--name", required=True, help="Snapshot name (e.g., baseline-v1).")
+def portfolio_snapshot(name: str) -> None:
+    """Save current ROI scores to a JSON snapshot file."""
+    import json
+    from sagaflow.portfolio.db import db_exists
+    from sagaflow.portfolio.scorer import ROIScorer
+
+    if not db_exists():
+        click.echo("error: portfolio DB not found. Run 'sagaflow portfolio init' first.", err=True)
+        sys.exit(1)
+
+    snap_dir = Path.home() / ".sagaflow" / "portfolio_snapshots"
+    snap_dir.mkdir(parents=True, exist_ok=True)
+    snap_file = snap_dir / f"{name}.json"
+
+    scorer = ROIScorer()
+    scores = scorer.score_all()
+    data = {
+        s.skill_name: {
+            "composite": s.composite,
+            "verdict": s.verdict.value if s.verdict else None,
+            "usage": s.usage_score,
+            "recency": s.recency_score,
+            "outcome": s.outcome_score,
+            "cost_eff": s.cost_efficiency_score,
+            "sample_count": s.sample_count,
+            "computed_at": s.computed_at.isoformat(),
+        }
+        for s in scores
+    }
+    snap_file.write_text(json.dumps(data, indent=2))
+    click.echo(f"Snapshot saved: {snap_file}")
+
+
+@portfolio.command("regress")
+@click.option("--baseline", required=True, help="Snapshot name to compare against.")
+@click.option("--threshold", default=0.1, type=float, help="Max allowed score drop.")
+def portfolio_regress(baseline: str, threshold: float) -> None:
+    """Compare current scores against a baseline snapshot. Exits 1 on regression."""
+    import json
+    from sagaflow.portfolio.db import db_exists
+    from sagaflow.portfolio.scorer import ROIScorer
+
+    if not db_exists():
+        click.echo("error: portfolio DB not found. Run 'sagaflow portfolio init' first.", err=True)
+        sys.exit(1)
+
+    snap_file = Path.home() / ".sagaflow" / "portfolio_snapshots" / f"{baseline}.json"
+    if not snap_file.exists():
+        click.echo(f"error: snapshot {baseline!r} not found at {snap_file}", err=True)
+        sys.exit(1)
+
+    baseline_data = json.loads(snap_file.read_text())
+
+    scorer = ROIScorer()
+    current = {s.skill_name: s for s in scorer.score_all()}
+
+    regressions: list[str] = []
+    for name, prev in baseline_data.items():
+        if prev.get("composite") is None:
+            continue
+        cur = current.get(name)
+        if cur is None or cur.composite is None:
+            continue
+        delta = prev["composite"] - cur.composite
+        if delta > threshold:
+            regressions.append(
+                f"  {name}: {prev['composite']:.3f} → {cur.composite:.3f} (Δ={delta:+.3f})"
+            )
+
+    if regressions:
+        click.echo(f"REGRESSION DETECTED (threshold={threshold}):", err=True)
+        for line in regressions:
+            click.echo(line, err=True)
+        sys.exit(1)
+    else:
+        click.echo(f"No regressions (threshold={threshold}, baseline={baseline}).")
 
 
 if __name__ == "__main__":

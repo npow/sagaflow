@@ -271,7 +271,7 @@ class TestWorkflowAbortSignal:
         from temporalio import activity
         from temporalio.testing import WorkflowEnvironment
 
-        from sagaflow.durable.activities import emit_finding, write_artifact
+        from sagaflow.durable.activities import emit_finding, finalize_manifest_activity, write_artifact
         from sagaflow.generic.activities import (
             generic_tool_adapter_bash_tool,
             generic_tool_adapter_glob_tool,
@@ -312,7 +312,7 @@ class TestWorkflowAbortSignal:
                 activities=[
                     slow_claude,
                     write_artifact,
-                    emit_finding,
+                    emit_finding, finalize_manifest_activity,
                     generic_tool_adapter_read_file_tool,
                     generic_tool_adapter_bash_tool,
                     generic_tool_adapter_grep_tool,
@@ -335,7 +335,7 @@ class TestWorkflowStatusQuery:
         from temporalio.worker import Worker as TWorker
         from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
-        from sagaflow.durable.activities import emit_finding, write_artifact
+        from sagaflow.durable.activities import emit_finding, finalize_manifest_activity, write_artifact
         from sagaflow.generic.activities import (
             CallClaudeInput,
             ClaudeResponse,
@@ -361,7 +361,7 @@ class TestWorkflowStatusQuery:
                 task_queue=TASK_QUEUE,
                 workflows=[ClaudeSkillWorkflow, SubagentWorkflow],
                 activities=[
-                    quick_claude, write_artifact, emit_finding,
+                    quick_claude, write_artifact, emit_finding, finalize_manifest_activity,
                     generic_tool_adapter_read_file_tool,
                     generic_tool_adapter_bash_tool,
                     generic_tool_adapter_grep_tool,

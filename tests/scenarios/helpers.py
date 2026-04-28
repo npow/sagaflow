@@ -8,7 +8,7 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 from temporalio.worker.workflow_sandbox import SandboxRestrictions, SandboxedWorkflowRunner
 
-from sagaflow.durable.activities import emit_finding, write_artifact
+from sagaflow.durable.activities import emit_finding, finalize_manifest_activity, write_artifact
 from sagaflow.temporal_client import TASK_QUEUE
 
 SANDBOX_RESTRICTIONS = SandboxRestrictions.default.with_passthrough_modules(
@@ -22,17 +22,22 @@ async def run_scenario_workflow(
     workflow_input,
     fake_spawn,
     extra_activities: list | None = None,
+    extra_workflows: list | None = None,
     run_id: str = "scenario-test",
 ) -> str:
-    activities = [write_artifact, emit_finding, fake_spawn]
+    activities = [write_artifact, emit_finding, finalize_manifest_activity, fake_spawn]
     if extra_activities:
         activities.extend(extra_activities)
+
+    workflows = [workflow_cls]
+    if extra_workflows:
+        workflows.extend(extra_workflows)
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
         async with Worker(
             env.client,
             task_queue=TASK_QUEUE,
-            workflows=[workflow_cls],
+            workflows=workflows,
             activities=activities,
             workflow_runner=SandboxedWorkflowRunner(restrictions=SANDBOX_RESTRICTIONS),
             debug_mode=True,

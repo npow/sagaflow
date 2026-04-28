@@ -305,3 +305,28 @@ def _finalize_once(
         }
 
         _write_atomic(_manifest_path(run_dir), data)
+
+
+def write_budget_result(
+    run_dir: Path,
+    accumulated_cost_usd: float,
+    max_cost_usd: float | None,
+    step_count: int,
+    alerts_fired: list[float],
+    final_decision: str,
+) -> None:
+    """Persist budget enforcement state into the manifest."""
+    lock = _lock_path(run_dir)
+    try:
+        with FileLock(lock, timeout=_LOCK_TIMEOUT):
+            data = _read_manifest(run_dir)
+            data["budget_result"] = {
+                "final_cost_usd": round(accumulated_cost_usd, 6),
+                "max_cost_usd": max_cost_usd,
+                "step_count": step_count,
+                "alerts_fired": sorted(alerts_fired),
+                "final_decision": final_decision,
+            }
+            _write_atomic(_manifest_path(run_dir), data)
+    except Timeout:
+        logger.warning("manifest lock timeout writing budget_result for %s", run_dir)

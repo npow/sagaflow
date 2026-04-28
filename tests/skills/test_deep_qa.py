@@ -22,7 +22,7 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 from temporalio.worker.workflow_sandbox import SandboxRestrictions, SandboxedWorkflowRunner
 
-from sagaflow.durable.activities import SpawnSubagentInput, emit_finding, write_artifact
+from sagaflow.durable.activities import SpawnSubagentInput, emit_finding, finalize_manifest_activity, write_artifact
 from sagaflow.temporal_client import TASK_QUEUE
 from skills.deep_qa.activities import read_text_file
 from skills.deep_qa.workflow import DeepQaInput, DeepQaWorkflow
@@ -48,7 +48,7 @@ async def _run_workflow(
             env.client,
             task_queue=TASK_QUEUE,
             workflows=[DeepQaWorkflow],
-            activities=[write_artifact, emit_finding, fake_spawn, read_text_file],
+            activities=[write_artifact, emit_finding, finalize_manifest_activity, fake_spawn, read_text_file],
             workflow_runner=SandboxedWorkflowRunner(restrictions=_SANDBOX_RESTRICTIONS),
         ):
             return await env.client.execute_workflow(

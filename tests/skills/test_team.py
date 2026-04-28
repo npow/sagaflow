@@ -9,7 +9,7 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 from temporalio.worker.workflow_sandbox import SandboxRestrictions, SandboxedWorkflowRunner
 
-from sagaflow.durable.activities import SpawnSubagentInput, emit_finding, write_artifact
+from sagaflow.durable.activities import SpawnSubagentInput, emit_finding, finalize_manifest_activity, write_artifact
 from sagaflow.temporal_client import TASK_QUEUE
 from skills.team.workflow import TeamInput, TeamWorkflow
 
@@ -77,7 +77,7 @@ async def test_team_workflow_happy_path(tmp_path) -> None:
             env.client,
             task_queue=TASK_QUEUE,
             workflows=[TeamWorkflow],
-            activities=[write_artifact, emit_finding, _fake],
+            activities=[write_artifact, emit_finding, finalize_manifest_activity, _fake],
             workflow_runner=SandboxedWorkflowRunner(
                 restrictions=SandboxRestrictions.default.with_passthrough_modules(
                     "httpx", "anthropic", "sagaflow", "pydantic", "skills", "claude_skill_"

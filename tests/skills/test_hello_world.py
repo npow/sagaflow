@@ -12,7 +12,7 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
-from sagaflow.durable.activities import emit_finding, write_artifact
+from sagaflow.durable.activities import emit_finding, finalize_manifest_activity, write_artifact
 from sagaflow.temporal_client import TASK_QUEUE
 from skills.hello_world.workflow import HelloWorldInput, HelloWorldWorkflow
 
@@ -28,7 +28,7 @@ async def test_hello_world_round_trips(tmp_path) -> None:
             env.client,
             task_queue=TASK_QUEUE,
             workflows=[HelloWorldWorkflow],
-            activities=[write_artifact, emit_finding, _fake_spawn_subagent],
+            activities=[write_artifact, emit_finding, finalize_manifest_activity, _fake_spawn_subagent],
             workflow_runner=SandboxedWorkflowRunner(
                 restrictions=SandboxRestrictions.default.with_passthrough_modules(
                     "httpx", "anthropic", "sagaflow", "pydantic", "skills", "claude_skill_"
