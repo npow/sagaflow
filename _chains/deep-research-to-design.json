@@ -1,0 +1,30 @@
+{
+  "name": "deep-research-to-design",
+  "description": "Research a topic thoroughly, then produce an adversarially-critiqued design spec from the findings.",
+  "steps": [
+    {
+      "id": "research",
+      "skill": "deep-research",
+      "args": {
+        "concept": "${input.concept}",
+        "max_rounds": 3
+      },
+      "exports": ["report.md"]
+    },
+    {
+      "id": "design",
+      "skill": "deep-design",
+      "args": {
+        "concept": "${steps.research.exports['report.md']}",
+        "max_rounds": 3
+      },
+      "on_failure": "abort"
+    }
+  ],
+  "inputs": {
+    "concept": {
+      "description": "The topic or concept to research and then design a system for.",
+      "required": true
+    }
+  }
+}
