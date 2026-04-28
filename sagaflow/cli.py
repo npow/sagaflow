@@ -1075,5 +1075,59 @@ def backfill(dry_run: bool, force: bool) -> None:
         click.echo(f"{verb} {len(processed)} run(s)")
 
 
+@main.group()
+def test() -> None:
+    """Scenario reliability tests."""
+
+
+@test.command("run")
+@click.option("--skill", help="Only run scenarios for this skill.")
+@click.option("--tag", help="Only run scenarios matching this tag.")
+@click.option("--save", "save_path", type=click.Path(), help="Save JSON report.")
+@click.option("-v", "--verbose", is_flag=True, help="Verbose pytest output.")
+def test_run(skill: str | None, tag: str | None, save_path: str | None, verbose: bool) -> None:
+    """Run scenario reliability tests via pytest."""
+    import subprocess
+    import sys
+
+    cmd = [sys.executable, "-m", "pytest", "tests/scenarios/", "--tb=short"]
+    if verbose:
+        cmd.append("-v")
+    if skill:
+        cmd.extend(["-k", skill.replace("-", "_")])
+    if tag:
+        cmd.extend(["-k", tag])
+
+    result = subprocess.run(cmd, cwd=str(Path(__file__).resolve().parent.parent))
+
+    if save_path:
+        click.echo(f"(report saving requires pytest plugin — use --save with pytest-json-report)")
+
+    sys.exit(result.returncode)
+
+
+@test.command("compare")
+@click.argument("baseline", type=click.Path(exists=True))
+@click.argument("current", type=click.Path(exists=True))
+def test_compare(baseline: str, current: str) -> None:
+    """Compare two scenario test reports."""
+    from tests.scenarios.reporter import compare_reports
+
+    diff = compare_reports(Path(baseline), Path(current))
+    if diff["has_regressions"]:
+        click.secho(f"REGRESSIONS: {diff['regressions']}", fg="red")
+    if diff["improvements"]:
+        click.secho(f"Improvements: {diff['improvements']}", fg="green")
+    if diff["new_scenarios"]:
+        click.echo(f"New: {diff['new_scenarios']}")
+    if diff["removed"]:
+        click.echo(f"Removed: {diff['removed']}")
+    click.echo(
+        f"Baseline: {diff['baseline_total']} | Current: {diff['current_total']}"
+    )
+    if diff["has_regressions"]:
+        raise SystemExit(1)
+
+
 if __name__ == "__main__":
     main()
