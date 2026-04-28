@@ -118,6 +118,52 @@ async def _heartbeat_loop() -> None:
         await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
 
 
+def _extract_json_object(raw: str) -> dict | None:
+    """Best-effort extraction of a JSON object from potentially wrapped model output.
+
+    Tries, in order: direct parse, markdown code-block extraction, brace-delimited
+    substring. Returns the parsed dict, or None if all attempts fail.
+    """
+    import json
+    import re
+
+    if not raw or not raw.strip():
+        return None
+
+    text = raw.strip()
+
+    # 1. Direct parse (happy path — model returned clean JSON).
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            return obj
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    # 2. Extract from markdown code blocks: ```json ... ``` or ``` ... ```
+    code_block = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
+    if code_block:
+        try:
+            obj = json.loads(code_block.group(1).strip())
+            if isinstance(obj, dict):
+                return obj
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # 3. Find outermost { ... } and try parsing.
+    first_brace = text.find("{")
+    last_brace = text.rfind("}")
+    if first_brace != -1 and last_brace > first_brace:
+        try:
+            obj = json.loads(text[first_brace : last_brace + 1])
+            if isinstance(obj, dict):
+                return obj
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    return None
+
+
 @activity.defn(name="spawn_subagent")
 async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
     prompt_path = Path(inp.user_prompt_path)
@@ -195,8 +241,8 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
 
     if inp.output_schema is not None:
         import json
-        try:
-            parsed = json.loads(raw)
+        parsed = _extract_json_object(raw)
+        if parsed is not None:
             if isinstance(parsed, dict):
                 parsed, br = validate_boundary(parsed, label=label)
             if br.truncated_fields:
@@ -204,12 +250,12 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
                 logger.error("TRUNCATED fields in %s: %s", label, br.truncated_fields)
             parsed.update(_token_meta)
             return parsed
-        except (json.JSONDecodeError, TypeError) as exc:
-            logger.warning(
-                "Schema-constrained response not valid JSON (label=%s, role=%s, error=%s)",
-                label, inp.role, exc,
-            )
-            return {MALFORMED_SENTINEL: "1", "_error": str(exc), "_raw": raw[:2000], **_token_meta}
+        logger.warning(
+            "Schema-constrained response not valid JSON after extraction attempts "
+            "(label=%s, role=%s, raw_len=%d, raw_head=%.200s)",
+            label, inp.role, len(raw) if raw else 0, (raw or "")[:200],
+        )
+        return {MALFORMED_SENTINEL: "1", "_error": "no valid JSON found", "_raw": raw[:2000], **_token_meta}
 
     try:
         parsed = parse_structured(raw)
