@@ -135,8 +135,26 @@ def _inbox() -> "Inbox":
     return Inbox(path=Paths.from_env().inbox)
 
 
+def _run_description(run_id: str) -> str:
+    """Read a one-line description from concept.md, seed-topic.md, or SKILL.md in the run dir."""
+    from sagaflow.paths import Paths
+
+    run_dir = Paths.from_env().run_dir_for(run_id)
+    for candidate in ("concept.md", "seed-topic.md"):
+        path = run_dir / candidate
+        if path.exists():
+            try:
+                for line in path.read_text().splitlines():
+                    line = line.strip().lstrip("#").strip()
+                    if line:
+                        return line[:80]
+            except OSError:
+                pass
+    return ""
+
+
 def _list_workflows() -> list[dict[str, str]]:
-    """Return recent sagaflow workflows from Temporal as {id, status} rows."""
+    """Return recent sagaflow workflows from Temporal as {id, status, description} rows."""
     import asyncio as _a
 
     from sagaflow.temporal_client import TASK_QUEUE, connect
@@ -147,7 +165,9 @@ def _list_workflows() -> list[dict[str, str]]:
         query = f"TaskQueue = '{TASK_QUEUE}'"
         async for wf in client.list_workflows(query=query):
             status = wf.status.name if wf.status is not None else "UNKNOWN"
-            rows.append({"id": wf.id, "status": status})
+            run_id = wf.id.removeprefix("sagaflow-")
+            desc = _run_description(run_id)
+            rows.append({"id": wf.id, "status": status, "description": desc})
         return rows
 
     try:
@@ -221,8 +241,31 @@ def list_cmd() -> None:
     if not rows:
         click.echo("no workflows to list")
         return
+    by_status: dict[str, list[dict[str, str]]] = {}
     for row in rows:
-        click.echo(f"{row['id']} {row['status']}")
+        by_status.setdefault(row["status"], []).append(row)
+    order = ["RUNNING", "COMPLETED", "FAILED", "CANCELED", "TERMINATED"]
+    for status in order:
+        group = by_status.pop(status, [])
+        if not group:
+            continue
+        click.echo(f"\n{status} ({len(group)}):")
+        for row in group:
+            rid = row["id"].removeprefix("sagaflow-")
+            desc = row.get("description", "")
+            if desc:
+                click.echo(f"  {rid}  — {desc}")
+            else:
+                click.echo(f"  {rid}")
+    for status, group in by_status.items():
+        click.echo(f"\n{status} ({len(group)}):")
+        for row in group:
+            rid = row["id"].removeprefix("sagaflow-")
+            desc = row.get("description", "")
+            if desc:
+                click.echo(f"  {rid}  — {desc}")
+            else:
+                click.echo(f"  {rid}")
 
 
 @main.command()
