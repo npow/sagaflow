@@ -77,8 +77,12 @@ class ClaudeCliTransport:
 
 
 async def _terminate(process: asyncio.subprocess.Process) -> None:
-    process.kill()
     try:
-        await asyncio.wait_for(process.wait(), timeout=2.0)
-    except asyncio.TimeoutError:
-        pass
+        process.terminate()
+        await asyncio.wait_for(process.wait(), timeout=5.0)
+    except (asyncio.TimeoutError, ProcessLookupError):
+        try:
+            process.kill()
+            await asyncio.wait_for(process.wait(), timeout=2.0)
+        except (asyncio.TimeoutError, ProcessLookupError):
+            pass
