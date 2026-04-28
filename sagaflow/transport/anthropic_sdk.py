@@ -27,11 +27,13 @@ def _fix_schema(schema: dict) -> dict:
     schema = dict(schema)
     if schema.get("type") == "object" and "additionalProperties" not in schema:
         schema["additionalProperties"] = False
-    for key in ("properties", "items", "anyOf", "oneOf", "allOf"):
+    if "properties" in schema and isinstance(schema["properties"], dict):
+        schema["properties"] = {k: _fix_schema(v) for k, v in schema["properties"].items()}
+    if "items" in schema and isinstance(schema["items"], dict):
+        schema["items"] = _fix_schema(schema["items"])
+    for key in ("anyOf", "oneOf", "allOf"):
         val = schema.get(key)
-        if isinstance(val, dict):
-            schema[key] = {k: _fix_schema(v) for k, v in val.items()}
-        elif isinstance(val, list):
+        if isinstance(val, list):
             schema[key] = [_fix_schema(v) for v in val]
     return schema
 

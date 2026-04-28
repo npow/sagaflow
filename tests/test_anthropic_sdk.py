@@ -209,3 +209,47 @@ async def test_all_retryable_status_codes_are_retried(mock_sleep) -> None:
         assert result.text == "ok", f"status {code} should have been retried"
         assert call_count == 2, f"status {code}: expected 2 calls, got {call_count}"
         mock_sleep.reset_mock()
+
+
+# -- _fix_schema tests --
+
+from sagaflow.transport.anthropic_sdk import _fix_schema
+
+
+def test_fix_schema_adds_additional_properties_to_object() -> None:
+    schema = {"type": "object", "properties": {"x": {"type": "string"}}}
+    fixed = _fix_schema(schema)
+    assert fixed["additionalProperties"] is False
+
+
+def test_fix_schema_recurses_into_nested_objects() -> None:
+    schema = {
+        "type": "object",
+        "properties": {
+            "inner": {"type": "object", "properties": {"y": {"type": "integer"}}},
+        },
+    }
+    fixed = _fix_schema(schema)
+    assert fixed["additionalProperties"] is False
+    assert fixed["properties"]["inner"]["additionalProperties"] is False
+
+
+def test_fix_schema_preserves_explicit_additional_properties() -> None:
+    schema = {"type": "object", "additionalProperties": True}
+    fixed = _fix_schema(schema)
+    assert fixed["additionalProperties"] is True
+
+
+def test_fix_schema_handles_non_object_types() -> None:
+    schema = {"type": "string"}
+    fixed = _fix_schema(schema)
+    assert "additionalProperties" not in fixed
+
+
+def test_fix_schema_handles_arrays_with_object_items() -> None:
+    schema = {
+        "type": "array",
+        "items": {"type": "object", "properties": {"z": {"type": "boolean"}}},
+    }
+    fixed = _fix_schema(schema)
+    assert fixed["items"]["additionalProperties"] is False

@@ -77,3 +77,11 @@ async def test_dispatch_passes_model_and_permissions_to_cli(fake_sdk, fake_cli) 
     call_kwargs = fake_cli.call.call_args.kwargs
     assert call_kwargs["model"] == "sonnet"
     assert call_kwargs["dangerously_skip_permissions"] is True
+
+
+def test_default_cli_timeout_is_900s() -> None:
+    req = SubagentRequest(
+        role="r", tier=ModelTier.HAIKU, system_prompt="s",
+        user_prompt="u", max_tokens=1, tools_needed=True,
+    )
+    assert req.cli_timeout_seconds == 900.0
