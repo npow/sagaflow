@@ -95,12 +95,22 @@ class SpawnSubagentInput:
     mcp_config_path: str | None = None
 
 
+_sdk_singleton: AnthropicSdkTransport | None = None
+_cli_singleton: ClaudeCliTransport | None = None
+
+
 def _get_sdk() -> AnthropicSdkTransport:
-    return AnthropicSdkTransport()
+    global _sdk_singleton
+    if _sdk_singleton is None:
+        _sdk_singleton = AnthropicSdkTransport()
+    return _sdk_singleton
 
 
 def _get_cli() -> ClaudeCliTransport:
-    return ClaudeCliTransport()
+    global _cli_singleton
+    if _cli_singleton is None:
+        _cli_singleton = ClaudeCliTransport()
+    return _cli_singleton
 
 
 async def _heartbeat_loop() -> None:

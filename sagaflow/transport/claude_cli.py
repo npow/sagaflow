@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import signal
 from dataclasses import dataclass
 
 
@@ -53,6 +55,7 @@ class ClaudeCliTransport:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
         )
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -78,11 +81,19 @@ class ClaudeCliTransport:
 
 async def _terminate(process: asyncio.subprocess.Process) -> None:
     try:
+        pgid = os.getpgid(process.pid)
+        os.killpg(pgid, signal.SIGTERM)
+    except (OSError, ProcessLookupError):
         process.terminate()
+    try:
         await asyncio.wait_for(process.wait(), timeout=5.0)
-    except (asyncio.TimeoutError, ProcessLookupError):
+    except asyncio.TimeoutError:
         try:
+            pgid = os.getpgid(process.pid)
+            os.killpg(pgid, signal.SIGKILL)
+        except (OSError, ProcessLookupError):
             process.kill()
+        try:
             await asyncio.wait_for(process.wait(), timeout=2.0)
         except (asyncio.TimeoutError, ProcessLookupError):
             pass
