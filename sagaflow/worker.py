@@ -93,18 +93,47 @@ def _load_skill_module(skill_dir: "Path", mod_name: str) -> "types.ModuleType | 
     return mod
 
 
+def _pre_register_package_stub(skill_dir: "Path", legacy_name: str) -> None:
+    """Register a lightweight ``skills.<legacy_name>`` stub WITHOUT executing code.
+
+    Creates a ``ModuleType`` with ``__path__`` set so Python's import machinery
+    can resolve ``from skills.<name>.workflow import ...`` via the stub's
+    search path.  The stub is marked with ``_is_stub = True`` so that
+    ``_register_legacy_aliases`` knows to replace it with the real module later.
+
+    This must run for ALL skills before any ``exec_module`` calls, so that
+    cross-skill imports (e.g. autopilot -> deep_plan) resolve regardless of
+    alphabetical directory order.
+    """
+    _ensure_skills_package()
+    pkg_name = f"skills.{legacy_name}"
+    if pkg_name in sys.modules:
+        return
+    stub = types.ModuleType(pkg_name)
+    stub.__path__ = [str(skill_dir)]  # type: ignore[attr-defined]
+    stub.__package__ = pkg_name
+    stub._is_stub = True  # type: ignore[attr-defined]
+    sys.modules[pkg_name] = stub
+
+
 def _register_legacy_aliases(skill_dir: "Path", legacy_name: str) -> None:
     """Register ``skills.<legacy_name>`` and ``skills.<legacy_name>.<sub>`` aliases.
 
     This lets cross-skill imports like ``from skills.deep_plan.workflow import ...``
     resolve when skills are loaded from the claude-skills directory.
+
+    If a stub was pre-registered by ``_pre_register_package_stub``, it is
+    replaced with the real module from ``exec_module``.
     """
     _ensure_skills_package()
     pkg_name = f"skills.{legacy_name}"
 
-    # Register the package (__init__.py) under the legacy name
+    # Register the package (__init__.py) under the legacy name.
+    # Replace pre-registered stubs (marked with _is_stub).
     init_py = skill_dir / "__init__.py"
-    if init_py.exists() and pkg_name not in sys.modules:
+    existing = sys.modules.get(pkg_name)
+    is_stub = getattr(existing, "_is_stub", False)
+    if init_py.exists() and (existing is None or is_stub):
         spec = importlib.util.spec_from_file_location(
             pkg_name, str(init_py),
             submodule_search_locations=[str(skill_dir)],
@@ -141,13 +170,37 @@ def build_registry() -> SkillRegistry:
 
     The generic interpreter (``skills/generic/``) is always registered as a
     fallback from the sagaflow repo, not the claude-skills dir.
+
+    Loading uses three phases to handle cross-skill dependencies (e.g.
+    autopilot imports deep_plan, team, etc.):
+
+    Phase 1 — Stub pre-registration: lightweight ``ModuleType`` stubs with
+    ``__path__`` set for every legacy skill.  No code is executed.
+
+    Phase 2 — Legacy alias registration: ``exec_module`` runs each skill's
+    ``__init__.py`` and submodules.  Cross-skill imports now resolve via the
+    stubs from Phase 1 regardless of alphabetical directory order.
+
+    Phase 3 — Skill registration: each skill's ``register(registry)`` is called.
     """
     registry = SkillRegistry()
+    failed_skills: dict[str, str] = {}
 
     skills_root = claude_skills_dir()
     if skills_root.is_dir():
-        # Phase 1: register legacy aliases for all skill submodules so
-        # cross-skill imports resolve (e.g. autopilot -> deep_plan.workflow).
+        # Phase 1: pre-register lightweight stubs for ALL legacy skills so
+        # that cross-skill imports resolve regardless of load order.
+        for skill_dir in sorted(skills_root.iterdir()):
+            if not skill_dir.is_dir():
+                continue
+            legacy = _DIR_TO_LEGACY.get(skill_dir.name)
+            if legacy:
+                try:
+                    _pre_register_package_stub(skill_dir, legacy)
+                except Exception as exc:  # noqa: BLE001
+                    _log.warning("failed to pre-register stub for %s: %s", skill_dir.name, exc)
+
+        # Phase 2: register legacy aliases — now safe because stubs exist.
         for skill_dir in sorted(skills_root.iterdir()):
             if not skill_dir.is_dir():
                 continue
@@ -155,10 +208,14 @@ def build_registry() -> SkillRegistry:
             if legacy:
                 try:
                     _register_legacy_aliases(skill_dir, legacy)
-                except Exception:  # noqa: BLE001
-                    _log.debug("failed to register legacy aliases for %s", skill_dir.name, exc_info=True)
+                except Exception as exc:  # noqa: BLE001
+                    failed_skills[skill_dir.name] = str(exc)
+                    _log.warning(
+                        "failed to register legacy aliases for %s: %s",
+                        skill_dir.name, exc, exc_info=True,
+                    )
 
-        # Phase 2: register each skill from the already-loaded legacy module
+        # Phase 3: register each skill from the already-loaded legacy module
         # (preferred) or by loading under a `skills.<name>` module name so the
         # Temporal sandbox can resolve it via the passthrough.
         for skill_dir in sorted(skills_root.iterdir()):
@@ -171,17 +228,19 @@ def build_registry() -> SkillRegistry:
             mod = None
             if legacy:
                 mod = sys.modules.get(f"skills.{legacy}")
+                if getattr(mod, "_is_stub", False):
+                    mod = None
             if mod is None:
                 mod_name = f"skills.{legacy}" if legacy else f"claude_skill_{skill_dir.name.replace('-', '_')}"
                 mod = _load_skill_module(skill_dir, mod_name)
             try:
                 if mod and hasattr(mod, "register"):
                     mod.register(registry)
-            except Exception:  # noqa: BLE001
-                _log.debug(
-                    "skipping skill dir %s (no register or import error)",
-                    skill_dir.name,
-                    exc_info=True,
+            except Exception as exc:  # noqa: BLE001
+                failed_skills[skill_dir.name] = str(exc)
+                _log.warning(
+                    "failed to register skill %s: %s",
+                    skill_dir.name, exc, exc_info=True,
                 )
 
     # Generic interpreter: runs any claude-skills SKILL.md via Claude tool-use.
@@ -191,6 +250,13 @@ def build_registry() -> SkillRegistry:
         generic_skill.register(registry)
     except ImportError:
         pass
+
+    if failed_skills:
+        _log.error(
+            "skill loading failures (%d): %s",
+            len(failed_skills),
+            ", ".join(f"{k} ({v})" for k, v in sorted(failed_skills.items())),
+        )
 
     return registry
 
@@ -226,6 +292,12 @@ def build_extra_workflows() -> list:
             LLMCriticWorkflow,
             ResourceMonitorWorkflow,
         ])
+    except ImportError:
+        pass
+
+    try:
+        from sagaflow.durable.chain_workflow import ChainWorkflow
+        extras.append(ChainWorkflow)
     except ImportError:
         pass
 
@@ -360,6 +432,17 @@ async def run_worker(*, target: str = DEFAULT_TARGET) -> None:
     )
     from sagaflow.durable.activities import finalize_manifest_activity as _finalize_act
     combined.extend([_slack_progress_act, _deliver_artifact_act, _slack_failure_act, _state_change_act, _finalize_act])
+    try:
+        from sagaflow.durable.chain_workflow import (
+            load_chain_declaration,
+            resolve_skill_content,
+            write_chain_file,
+            read_step_termination,
+            check_chain_exports,
+        )
+        combined.extend([load_chain_declaration, resolve_skill_content, write_chain_file, read_step_termination, check_chain_exports])
+    except ImportError:
+        pass
     seen_act: set[str] = set()
     all_activities: list = []
     for act in combined:
