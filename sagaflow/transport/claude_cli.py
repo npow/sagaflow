@@ -33,8 +33,11 @@ class ClaudeCliTransport:
         allowed_tools: list[str] | None = None,
         permission_mode: str | None = None,
         dangerously_skip_permissions: bool = False,
+        mcp_config_path: str | None = None,
     ) -> ClaudeCliResult:
         args = [self._command, "-p"]
+        if mcp_config_path:
+            args.extend(["--strict-mcp-config", "--mcp-config", mcp_config_path])
         if label:
             args.extend(["--append-system-prompt", f"[sagaflow:{label}]"])
         if model:

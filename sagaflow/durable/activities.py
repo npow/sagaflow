@@ -92,6 +92,7 @@ class SpawnSubagentInput:
     output_schema: dict | None = None
     run_dir: str = ""
     step_index: int = 0
+    mcp_config_path: str | None = None
 
 
 def _get_sdk() -> AnthropicSdkTransport:
@@ -213,6 +214,7 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
         tools_needed=inp.tools_needed,
         label=label,
         output_schema=inp.output_schema,
+        mcp_config_path=inp.mcp_config_path,
     )
 
     beat_task: asyncio.Task[None] | None = None

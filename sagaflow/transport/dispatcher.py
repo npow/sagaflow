@@ -19,6 +19,7 @@ class SubagentRequest:
     label: str = ""
     cli_timeout_seconds: float = 900.0
     output_schema: dict | None = None
+    mcp_config_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,7 @@ async def dispatch_subagent(
             model=model_alias,
             label=request.label,
             dangerously_skip_permissions=True,
+            mcp_config_path=request.mcp_config_path,
         )
         return DispatchResult(text=result.stdout)
 
