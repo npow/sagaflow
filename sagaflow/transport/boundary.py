@@ -90,7 +90,11 @@ def validate_boundary(
     total_bytes = 0
     for key, value in items:
         if not isinstance(value, str):
-            value = str(value)
+            import json as _json
+            try:
+                value = _json.dumps(value)
+            except (TypeError, ValueError):
+                value = str(value)
 
         value_bytes = len(value.encode("utf-8", errors="replace"))
         total_bytes += value_bytes
