@@ -243,18 +243,18 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
         import json
         parsed = _extract_json_object(raw)
         if parsed is not None:
+            # JSON-serialize non-string values BEFORE validate_boundary,
+            # which converts non-strings via str() (Python repr with single
+            # quotes that breaks downstream json.loads).
+            for k, v in list(parsed.items()):
+                if not isinstance(v, str):
+                    parsed[k] = json.dumps(v)
             if isinstance(parsed, dict):
                 parsed, br = validate_boundary(parsed, label=label)
             if br.truncated_fields:
                 parsed["_boundary_truncated"] = ",".join(br.truncated_fields)
                 logger.error("TRUNCATED fields in %s: %s", label, br.truncated_fields)
             parsed.update(_token_meta)
-            # Return type is dict[str, str] — Temporal converts non-string
-            # values via repr() which produces single-quoted Python syntax
-            # that fails json.loads(). Serialize complex values explicitly.
-            for k, v in parsed.items():
-                if not isinstance(v, str):
-                    parsed[k] = json.dumps(v)
             return parsed
         logger.warning(
             "Schema-constrained response not valid JSON after extraction attempts "
