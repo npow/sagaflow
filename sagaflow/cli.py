@@ -1943,5 +1943,145 @@ def memory_stats() -> None:
     click.echo(f"\nPatterns: {len(patterns)}")
 
 
+@main.group()
+def test():
+    """Run scenario reliability tests."""
+
+
+@test.command(name="run")
+@click.argument("skills", nargs=-1)
+@click.option("-v", "--verbose", is_flag=True, help="Pass -v to pytest.")
+@click.option("--report", type=click.Choice(["json", "console"]), default="console",
+              help="Output format.")
+@click.option("--output", "output_path", type=click.Path(), default=None,
+              help="Write JSON report to FILE.")
+@click.option("--save-baseline", is_flag=True,
+              help="Save results as ~/.sagaflow/baselines/latest.json")
+@click.option("--fail-fast", is_flag=True, help="Stop on first failure.")
+def test_run(skills, verbose, report, output_path, save_baseline, fail_fast):
+    """Run scenario tests, optionally filtered by SKILL names."""
+    import subprocess
+    import sys
+    import tempfile
+
+    scenario_dir = Path(__file__).resolve().parent.parent / "tests" / "scenarios"
+    if not scenario_dir.is_dir():
+        click.echo(f"Scenario directory not found: {scenario_dir}", err=True)
+        raise SystemExit(1)
+
+    if skills:
+        targets = []
+        for sk in skills:
+            normalized = sk.replace("-", "_")
+            candidate = scenario_dir / f"test_{normalized}.py"
+            if candidate.exists():
+                targets.append(str(candidate))
+            else:
+                click.echo(f"No scenario file for skill '{sk}': {candidate}", err=True)
+                raise SystemExit(1)
+    else:
+        targets = [str(scenario_dir)]
+
+    report_file = output_path
+    if report == "json" and not report_file:
+        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+        tmp.close()
+        report_file = tmp.name
+
+    args = [sys.executable, "-m", "pytest", *targets]
+    if verbose:
+        args.append("-v")
+    if fail_fast:
+        args.append("-x")
+    if report_file:
+        args.append(f"--scenario-report={report_file}")
+
+    result = subprocess.run(args, cwd=str(scenario_dir.parent.parent))
+
+    if report_file and report == "json":
+        rpath = Path(report_file)
+        if rpath.exists():
+            click.echo(rpath.read_text())
+
+    if save_baseline and report_file:
+        baseline_dir = Path.home() / ".sagaflow" / "baselines"
+        baseline_dir.mkdir(parents=True, exist_ok=True)
+        dest = baseline_dir / "latest.json"
+        rpath = Path(report_file)
+        if rpath.exists():
+            dest.write_text(rpath.read_text())
+            click.echo(f"Baseline saved: {dest}")
+
+    raise SystemExit(result.returncode)
+
+
+@test.command(name="compare")
+@click.argument("baseline", type=click.Path(exists=True))
+@click.argument("current", type=click.Path(exists=True))
+def test_compare(baseline, current):
+    """Compare two scenario report JSON files."""
+    from tests.scenarios.reporter import compare_reports as _compare
+
+    diff = _compare(Path(baseline), Path(current))
+    click.echo(f"Baseline: {diff['baseline_total']} scenarios")
+    click.echo(f"Current:  {diff['current_total']} scenarios")
+    if diff["regressions"]:
+        click.secho(f"\nRegressions ({len(diff['regressions'])}):", fg="red", bold=True)
+        for name in diff["regressions"]:
+            click.echo(f"  FAIL  {name}")
+    if diff["improvements"]:
+        click.secho(f"\nImprovements ({len(diff['improvements'])}):", fg="green", bold=True)
+        for name in diff["improvements"]:
+            click.echo(f"  PASS  {name}")
+    if diff["new_scenarios"]:
+        click.echo(f"\nNew ({len(diff['new_scenarios'])}): {', '.join(diff['new_scenarios'])}")
+    if diff["removed"]:
+        click.echo(f"\nRemoved ({len(diff['removed'])}): {', '.join(diff['removed'])}")
+    if diff["has_regressions"]:
+        raise SystemExit(1)
+    click.secho("\nNo regressions.", fg="green")
+
+
+@test.command(name="list")
+@click.option("--skill", default=None, help="Filter by skill name.")
+def test_list(skill):
+    """List all registered scenario tests."""
+    import importlib
+    import pkgutil
+    import sys
+
+    repo_root = Path(__file__).resolve().parent.parent
+    scenario_pkg_path = repo_root / "tests" / "scenarios"
+    if not scenario_pkg_path.is_dir():
+        click.echo("Scenario directory not found.", err=True)
+        raise SystemExit(1)
+
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
+    importlib.import_module("tests.conftest")
+
+    for _importer, modname, _ispkg in pkgutil.iter_modules([str(scenario_pkg_path)]):
+        if modname.startswith("test_"):
+            importlib.import_module(f"tests.scenarios.{modname}")
+
+    from tests.scenarios.registry import SCENARIO_REGISTRY
+
+    entries = sorted(SCENARIO_REGISTRY.values(), key=lambda m: (m.skill, m.name))
+    if skill:
+        entries = [e for e in entries if e.skill == skill]
+
+    if not entries:
+        click.echo("No scenarios found.")
+        return
+
+    click.echo(f"{'SKILL':<25} {'SCENARIO':<40} {'MODES'}")
+    click.echo("-" * 90)
+    for e in entries:
+        modes = ", ".join(e.failure_modes[:3]) or "-"
+        click.echo(f"{e.skill:<25} {e.name:<40} {modes}")
+    click.echo(f"\nTotal: {len(entries)} scenarios")
+
+
 if __name__ == "__main__":
     main()
