@@ -38,6 +38,13 @@ def _fix_schema(schema: dict) -> dict:
     return schema
 
 
+_MAX_OUTPUT_TOKENS: dict[str, int] = {
+    "claude-haiku-4-5-20251001": 64_000,
+    "claude-sonnet-4-6": 128_000,
+    "claude-opus-4-7": 128_000,
+}
+
+
 class ModelTier(Enum):
     HAIKU = "claude-haiku-4-5-20251001"
     SONNET = "claude-sonnet-4-6"
@@ -46,6 +53,10 @@ class ModelTier(Enum):
     @property
     def model_id(self) -> str:
         return self.value
+
+    @property
+    def max_output_tokens(self) -> int:
+        return _MAX_OUTPUT_TOKENS.get(self.value, 64_000)
 
 
 @dataclass
@@ -81,7 +92,7 @@ class AnthropicSdkTransport:
             try:
                 stream_kwargs: dict = {
                     "model": tier.model_id,
-                    "max_tokens": max_tokens,
+                    "max_tokens": min(max_tokens, tier.max_output_tokens),
                     "system": system_prompt,
                     "messages": [{"role": "user", "content": user_prompt}],
                 }
