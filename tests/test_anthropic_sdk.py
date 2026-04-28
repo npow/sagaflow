@@ -63,6 +63,43 @@ def test_tier_model_ids_are_pinned() -> None:
     assert ModelTier.OPUS.model_id == "claude-opus-4-7"
 
 
+def test_haiku_max_output_tokens_is_64k() -> None:
+    assert ModelTier.HAIKU.max_output_tokens == 64_000
+
+
+def test_sonnet_opus_max_output_tokens_is_128k() -> None:
+    assert ModelTier.SONNET.max_output_tokens == 128_000
+    assert ModelTier.OPUS.max_output_tokens == 128_000
+
+
+async def test_max_tokens_clamped_to_tier_limit(mock_anthropic_client) -> None:
+    """Requesting 128K tokens for Haiku should be clamped to 64K."""
+    transport = AnthropicSdkTransport(client=mock_anthropic_client)
+    await transport.call(
+        tier=ModelTier.HAIKU,
+        system_prompt="s",
+        user_prompt="u",
+        max_tokens=128_000,
+    )
+    call_args = mock_anthropic_client.messages.stream.call_args.kwargs
+    assert call_args["max_tokens"] == 64_000, (
+        f"Haiku max_tokens should be clamped to 64K, got {call_args['max_tokens']}"
+    )
+
+
+async def test_max_tokens_not_clamped_when_below_limit(mock_anthropic_client) -> None:
+    """Requesting tokens below the tier limit should pass through unchanged."""
+    transport = AnthropicSdkTransport(client=mock_anthropic_client)
+    await transport.call(
+        tier=ModelTier.HAIKU,
+        system_prompt="s",
+        user_prompt="u",
+        max_tokens=1_000,
+    )
+    call_args = mock_anthropic_client.messages.stream.call_args.kwargs
+    assert call_args["max_tokens"] == 1_000
+
+
 def _make_api_status_error(status_code: int) -> anthropic.APIStatusError:
     response = httpx.Response(status_code=status_code, request=httpx.Request("POST", "https://x"))
     return anthropic.APIStatusError(
