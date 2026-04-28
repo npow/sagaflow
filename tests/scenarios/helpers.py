@@ -35,6 +35,7 @@ async def run_scenario_workflow(
             workflows=[workflow_cls],
             activities=activities,
             workflow_runner=SandboxedWorkflowRunner(restrictions=SANDBOX_RESTRICTIONS),
+            debug_mode=True,
         ):
             return await env.client.execute_workflow(
                 workflow_cls.run,
