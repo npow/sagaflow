@@ -249,6 +249,12 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
                 parsed["_boundary_truncated"] = ",".join(br.truncated_fields)
                 logger.error("TRUNCATED fields in %s: %s", label, br.truncated_fields)
             parsed.update(_token_meta)
+            # Return type is dict[str, str] — Temporal converts non-string
+            # values via repr() which produces single-quoted Python syntax
+            # that fails json.loads(). Serialize complex values explicitly.
+            for k, v in parsed.items():
+                if not isinstance(v, str):
+                    parsed[k] = json.dumps(v)
             return parsed
         logger.warning(
             "Schema-constrained response not valid JSON after extraction attempts "
