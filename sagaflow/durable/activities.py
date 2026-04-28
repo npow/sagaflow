@@ -33,6 +33,7 @@ HEARTBEAT_INTERVAL_SECONDS = 20.0
 class WriteArtifactInput:
     path: str
     content: str
+    append: bool = False
 
 
 @activity.defn(name="write_artifact")
@@ -48,7 +49,11 @@ async def write_artifact(inp: WriteArtifactInput) -> None:
             target.name,
             "; ".join(boundary.injection_flags),
         )
-    target.write_text(content, encoding="utf-8")
+    if inp.append and target.exists():
+        with target.open("a", encoding="utf-8") as f:
+            f.write(content)
+    else:
+        target.write_text(content, encoding="utf-8")
 
 
 @dataclass(frozen=True)
@@ -217,6 +222,14 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
     cli = _get_cli()
     run_id = Path(inp.run_dir).name if inp.run_dir else "unknown"
     label = f"{run_id}/{inp.role}:{prompt_path.stem}"
+
+    effective_mcp_config = inp.mcp_config_path
+    if inp.tools_needed and not effective_mcp_config:
+        _fallback = Path.home() / ".sagaflow" / "mcp-research-minimal.json"
+        if _fallback.exists():
+            effective_mcp_config = str(_fallback)
+            logger.info("No MCP config specified; using fallback minimal config: %s", _fallback)
+
     request = SubagentRequest(
         role=inp.role,
         tier=tier,
@@ -226,7 +239,7 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
         tools_needed=inp.tools_needed,
         label=label,
         output_schema=inp.output_schema,
-        mcp_config_path=inp.mcp_config_path,
+        mcp_config_path=effective_mcp_config,
         cli_timeout_seconds=inp.cli_timeout_seconds,
     )
 
