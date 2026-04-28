@@ -462,4 +462,9 @@ async def run_worker(*, target: str = DEFAULT_TARGET) -> None:
         max_concurrent_activities=500,
         debug_mode=True,
     )
+    from sagaflow.manifest import cleanup_stale_runs
+    cleaned = cleanup_stale_runs()
+    if cleaned:
+        logger.info('cleaned up %d stale runs on startup', cleaned)
+
     await worker.run()

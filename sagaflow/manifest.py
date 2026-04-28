@@ -307,6 +307,49 @@ def _finalize_once(
         _write_atomic(_manifest_path(run_dir), data)
 
 
+def cleanup_stale_runs(max_age_hours: float = 1.0) -> int:
+    """Mark RUNNING runs whose manifest hasn't been modified recently as TIMED_OUT.
+
+    Called at worker startup to clean up zombies from prior crashes.
+    Returns the number of runs cleaned up.
+    """
+    from sagaflow.paths import Paths
+
+    runs_dir = Paths.from_env().runs_dir
+    if not runs_dir.exists():
+        return 0
+
+    import os
+
+    cutoff = time.time() - max_age_hours * 3600
+    cleaned = 0
+    for run_dir in runs_dir.iterdir():
+        if not run_dir.is_dir():
+            continue
+        manifest_file = _manifest_path(run_dir)
+        if not manifest_file.exists():
+            continue
+        if os.path.getmtime(manifest_file) > cutoff:
+            continue
+        try:
+            data = _read_manifest(run_dir)
+        except Exception:
+            continue
+        if data.get("status") != "RUNNING":
+            continue
+        try:
+            finalize_manifest(
+                run_dir,
+                status="TIMED_OUT",
+                termination={"reason": "stale_cleanup: worker restarted, run was still RUNNING"},
+            )
+            cleaned += 1
+            logger.info("cleaned up stale run %s", run_dir.name)
+        except Exception as exc:
+            logger.warning("failed to clean up stale run %s: %s", run_dir.name, exc)
+    return cleaned
+
+
 def write_budget_result(
     run_dir: Path,
     accumulated_cost_usd: float,
