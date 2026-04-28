@@ -70,6 +70,15 @@ class ReportSlackFailureInput:
     failed_step: str = ""
 
 
+@dataclass(frozen=True)
+class ReportSlackStateChangeInput:
+    run_dir: str
+    skill_name: str
+    state: str  # PAUSED, RUNNING, TAKEOVER
+    phase: str = ""
+    run_id: str = ""
+
+
 def init_progress_file(
     run_dir: str | Path,
     channel: str,
@@ -227,6 +236,45 @@ def _slack_api(method: str, body: dict) -> dict:
     except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
         pass
     return {}
+
+
+_STATE_MESSAGES: dict[str, tuple[str, str]] = {
+    "PAUSED": (
+        ":double_vertical_bar:",
+        "paused at {phase}\nUse `sagaflow resume {run_id}` to continue"
+        "\nor `sagaflow inject {run_id} --message \"...\"` to add context",
+    ),
+    "TAKEOVER": (
+        ":video_game:",
+        "operator takeover\nPhase: {phase}\nOperator is driving. Autonomous execution suspended.",
+    ),
+    "RUNNING": (
+        ":arrow_forward:",
+        "resumed\nContinuing from {phase}",
+    ),
+}
+
+
+@activity.defn(name="report_slack_state_change")
+async def report_slack_state_change(inp: ReportSlackStateChangeInput) -> None:
+    """Post a state-change notification to the Slack progress thread."""
+    config = _read_progress_file(inp.run_dir)
+    if config is None:
+        return
+
+    channel = config.get("channel", "")
+    thread_ts = config.get("thread_ts")
+    if not channel:
+        return
+
+    icon, template = _STATE_MESSAGES.get(inp.state, (":question:", "{state}"))
+    body = template.format(
+        phase=inp.phase or "unknown",
+        run_id=inp.run_id or "???",
+        state=inp.state,
+    )
+    text = f"{icon} *{inp.skill_name}* {body}"
+    _slack_post(channel, thread_ts, text)
 
 
 @activity.defn(name="report_slack_progress")

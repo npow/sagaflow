@@ -12,6 +12,7 @@ from temporalio.common import RetryPolicy
 NON_RETRYABLE_ERRORS: list[str] = [
     "InvalidInputError",
     "MalformedResponseError",
+    "AbortRequestedError",
 ]
 
 

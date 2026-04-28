@@ -356,9 +356,10 @@ async def run_worker(*, target: str = DEFAULT_TARGET) -> None:
         report_slack_progress as _slack_progress_act,
         deliver_artifact_to_slack as _deliver_artifact_act,
         report_slack_failure as _slack_failure_act,
+        report_slack_state_change as _state_change_act,
     )
     from sagaflow.durable.activities import finalize_manifest_activity as _finalize_act
-    combined.extend([_slack_progress_act, _deliver_artifact_act, _slack_failure_act, _finalize_act])
+    combined.extend([_slack_progress_act, _deliver_artifact_act, _slack_failure_act, _state_change_act, _finalize_act])
     seen_act: set[str] = set()
     all_activities: list = []
     for act in combined:

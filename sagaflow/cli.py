@@ -536,6 +536,253 @@ def mission_abort(workflow_id: str, reason: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Intervention commands — pause / resume / inject / takeover / abort / status
+# ---------------------------------------------------------------------------
+
+
+def _resolve_run_workflow_id(run_id_or_workflow_id: str) -> str:
+    """Accept either a sagaflow run-id (e.g. deep-qa-20260427-155146) or a
+    raw Temporal workflow-id and return the Temporal workflow-id.
+
+    Sagaflow run IDs map 1:1 to Temporal workflow IDs via the pattern
+    ``sagaflow-<run_id>``.
+    """
+    if run_id_or_workflow_id.startswith("sagaflow-"):
+        return run_id_or_workflow_id
+    return f"sagaflow-{run_id_or_workflow_id}"
+
+
+@main.command(name="status")
+@click.argument("run_id")
+def intervention_status(run_id: str) -> None:
+    """Show intervention state for a running workflow."""
+    import asyncio as _a
+    import json
+
+    from sagaflow.temporal_client import connect
+
+    wf_id = _resolve_run_workflow_id(run_id)
+
+    async def _go() -> dict:
+        client = await connect()
+        handle = client.get_workflow_handle(wf_id)
+        return await handle.query("get_status")
+
+    try:
+        result = _a.run(_go())
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "not found" in msg or "not_found" in msg:
+            click.echo(f"error: workflow {wf_id!r} not found", err=True)
+            sys.exit(1)
+        click.echo(f"error: status query failed: {exc}", err=True)
+        sys.exit(1)
+    click.echo(json.dumps(result, indent=2, default=str))
+
+
+@main.command(name="pause")
+@click.argument("run_id")
+def intervention_pause(run_id: str) -> None:
+    """Pause a running workflow at its next phase boundary."""
+    import asyncio as _a
+
+    from sagaflow.temporal_client import connect
+
+    wf_id = _resolve_run_workflow_id(run_id)
+
+    async def _go() -> None:
+        client = await connect()
+        handle = client.get_workflow_handle(wf_id)
+        await handle.signal("pause")
+
+    try:
+        _a.run(_go())
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "not found" in msg or "not_found" in msg:
+            click.echo(f"error: workflow {wf_id!r} not found", err=True)
+            sys.exit(1)
+        click.echo(f"error: pause signal failed: {exc}", err=True)
+        sys.exit(1)
+    click.echo(f"pause signal sent to {run_id}")
+
+
+@main.command(name="resume")
+@click.argument("run_id")
+def intervention_resume(run_id: str) -> None:
+    """Resume a paused workflow."""
+    import asyncio as _a
+
+    from sagaflow.temporal_client import connect
+
+    wf_id = _resolve_run_workflow_id(run_id)
+
+    async def _go() -> None:
+        client = await connect()
+        handle = client.get_workflow_handle(wf_id)
+        await handle.signal("resume")
+
+    try:
+        _a.run(_go())
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "not found" in msg or "not_found" in msg:
+            click.echo(f"error: workflow {wf_id!r} not found", err=True)
+            sys.exit(1)
+        click.echo(f"error: resume signal failed: {exc}", err=True)
+        sys.exit(1)
+    click.echo(f"resume signal sent to {run_id}")
+
+
+@main.command(name="inject")
+@click.argument("run_id")
+@click.option("--message", "-m", required=True, help="Message to inject into the workflow context")
+def intervention_inject(run_id: str, message: str) -> None:
+    """Inject a message into a running or paused workflow."""
+    import asyncio as _a
+
+    from sagaflow.temporal_client import connect
+
+    wf_id = _resolve_run_workflow_id(run_id)
+
+    async def _go() -> None:
+        client = await connect()
+        handle = client.get_workflow_handle(wf_id)
+        await handle.signal("inject", message)
+
+    try:
+        _a.run(_go())
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "not found" in msg or "not_found" in msg:
+            click.echo(f"error: workflow {wf_id!r} not found", err=True)
+            sys.exit(1)
+        click.echo(f"error: inject signal failed: {exc}", err=True)
+        sys.exit(1)
+    click.echo(f"message injected into {run_id}")
+
+
+@main.command(name="takeover")
+@click.argument("run_id")
+def intervention_takeover(run_id: str) -> None:
+    """Take over a paused workflow for manual operation."""
+    import asyncio as _a
+
+    from sagaflow.temporal_client import connect
+
+    wf_id = _resolve_run_workflow_id(run_id)
+
+    async def _go() -> None:
+        client = await connect()
+        handle = client.get_workflow_handle(wf_id)
+        await handle.signal("takeover")
+
+    try:
+        _a.run(_go())
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "not found" in msg or "not_found" in msg:
+            click.echo(f"error: workflow {wf_id!r} not found", err=True)
+            sys.exit(1)
+        click.echo(f"error: takeover signal failed: {exc}", err=True)
+        sys.exit(1)
+    click.echo(f"takeover signal sent to {run_id}")
+    click.echo("use 'sagaflow release' to return control, or 'sagaflow abort' to cancel")
+
+
+@main.command(name="release")
+@click.argument("run_id")
+def intervention_release(run_id: str) -> None:
+    """Release a taken-over workflow back to autonomous execution."""
+    import asyncio as _a
+
+    from sagaflow.temporal_client import connect
+
+    wf_id = _resolve_run_workflow_id(run_id)
+
+    async def _go() -> None:
+        client = await connect()
+        handle = client.get_workflow_handle(wf_id)
+        await handle.signal("release")
+
+    try:
+        _a.run(_go())
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "not found" in msg or "not_found" in msg:
+            click.echo(f"error: workflow {wf_id!r} not found", err=True)
+            sys.exit(1)
+        click.echo(f"error: release signal failed: {exc}", err=True)
+        sys.exit(1)
+    click.echo(f"release signal sent to {run_id} — resuming autonomous execution")
+
+
+@main.command(name="abort")
+@click.argument("run_id")
+@click.option("--reason", default="user-abort", help="Reason for aborting")
+def intervention_abort(run_id: str, reason: str) -> None:
+    """Abort a running workflow."""
+    import asyncio as _a
+
+    from sagaflow.temporal_client import connect
+
+    wf_id = _resolve_run_workflow_id(run_id)
+
+    async def _go() -> None:
+        client = await connect()
+        handle = client.get_workflow_handle(wf_id)
+        await handle.signal("abort", reason)
+
+    try:
+        _a.run(_go())
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "not found" in msg or "not_found" in msg:
+            click.echo(f"error: workflow {wf_id!r} not found", err=True)
+            sys.exit(1)
+        click.echo(f"error: abort signal failed: {exc}", err=True)
+        sys.exit(1)
+    click.echo(f"abort signal sent to {run_id}")
+
+
+@main.command(name="conversation")
+@click.argument("run_id")
+def intervention_conversation(run_id: str) -> None:
+    """Show the last 20 messages from a workflow's conversation."""
+    import asyncio as _a
+
+    from sagaflow.temporal_client import connect
+
+    wf_id = _resolve_run_workflow_id(run_id)
+
+    async def _go() -> list:
+        client = await connect()
+        handle = client.get_workflow_handle(wf_id)
+        return await handle.query("get_conversation")
+
+    try:
+        msgs = _a.run(_go())
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "not found" in msg or "not_found" in msg:
+            click.echo(f"error: workflow {wf_id!r} not found", err=True)
+            sys.exit(1)
+        click.echo(f"error: conversation query failed: {exc}", err=True)
+        sys.exit(1)
+    if not msgs:
+        click.echo("(no messages yet)")
+        return
+    for m in msgs:
+        role = m.get("role", "?")
+        content = m.get("content", "")
+        if isinstance(content, str):
+            preview = content[:200]
+        else:
+            preview = str(content)[:200]
+        click.echo(f"[{role}] {preview}")
+
+
+# ---------------------------------------------------------------------------
 # catalog subcommands — skill capability discovery
 # ---------------------------------------------------------------------------
 

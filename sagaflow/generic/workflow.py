@@ -51,6 +51,7 @@ with workflow.unsafe.imports_passed_through():
         ClaudeToolUse,
     )
     from sagaflow.generic.tools import ALL_TOOLS, TOOL_HANDLERS
+    from sagaflow.intervention import InterventionMixin
     from sagaflow.temporal_client import TASK_QUEUE
 
 
@@ -299,30 +300,48 @@ def _format_tool_result(content: str) -> str:
 
 
 @workflow.defn(name="ClaudeSkillWorkflow")
-class ClaudeSkillWorkflow:
+class ClaudeSkillWorkflow(InterventionMixin):
     """Top-level coordinator. Runs Claude's tool-use loop with the full tool palette."""
 
     @workflow.run
     async def run(self, inp: ClaudeSkillInput) -> str:
+        self._init_intervention(inp.run_dir, inp.skill_name)
+
         system_prompt = _build_system_prompt(
             inp.skill_md_content, inp.run_dir, inp.inbox_path
         )
-        messages: list[dict] = [
+        self._messages: list[dict] = [
             {"role": "user", "content": _initial_user_message(inp.skill_name, inp.user_args)}
         ]
 
-        last_text = ""
+        self._last_text = ""
         truncated = False
         iteration = 0
         subagent_counter = 0
 
         while iteration < inp.max_iterations:
             iteration += 1
+
+            await self._intervention_checkpoint(f"iteration-{iteration}")
+            if self._abort_requested:
+                self._last_text = f"Aborted by operator: {self._abort_reason}"
+                break
+            if self._intervention_state == "TAKEOVER":
+                await workflow.wait_condition(
+                    lambda: self._intervention_state != "TAKEOVER" or self._abort_requested
+                )
+                if self._abort_requested:
+                    self._last_text = f"Aborted by operator: {self._abort_reason}"
+                    break
+            injection = self._drain_injections_as_prefix()
+            if injection:
+                self._messages.append({"role": "user", "content": injection})
+
             response: ClaudeResponse = await workflow.execute_activity(
                 "call_claude_with_tools",
                 CallClaudeInput(
                     system_prompt=system_prompt,
-                    messages=messages,
+                    messages=self._messages,
                     tools=ALL_TOOLS,
                     tier_name=inp.tier_name,
                     max_tokens=_CLAUDE_MAX_TOKENS,
@@ -333,7 +352,7 @@ class ClaudeSkillWorkflow:
                 retry_policy=SONNET_POLICY,
             )
             if response.text:
-                last_text = response.text
+                self._last_text = response.text
 
             if response.stop_reason == "end_turn":
                 break
@@ -346,7 +365,7 @@ class ClaudeSkillWorkflow:
 
             # Append the assistant turn before dispatching tool_uses so the
             # next message's tool_result ids match.
-            messages.append(_assistant_message_from_response(response))
+            self._messages.append(_assistant_message_from_response(response))
 
             # Dispatch all tool_uses in parallel. Each becomes its own Temporal
             # activity (or child workflow) event in the history.
@@ -375,13 +394,14 @@ class ClaudeSkillWorkflow:
                 }
                 for tu, result in zip(response.tool_uses, results)
             ]
-            messages.append(_tool_result_message(tool_result_blocks))
+            self._messages.append(_tool_result_message(tool_result_blocks))
 
             # Keep history bounded so long runs don't blow out token budget.
-            messages = _trim_history(messages)
+            self._messages = _trim_history(self._messages)
 
         if iteration >= inp.max_iterations:
             truncated = True
+        aborted = self._abort_requested
 
         # Build and persist final report.
         report_body = _build_final_report(
@@ -390,7 +410,7 @@ class ClaudeSkillWorkflow:
             iterations=iteration,
             max_iterations=inp.max_iterations,
             truncated=truncated,
-            final_text=last_text,
+            final_text=self._last_text,
         )
         report_path = f"{inp.run_dir}/run-summary.md"
         await workflow.execute_activity(
@@ -401,10 +421,12 @@ class ClaudeSkillWorkflow:
         )
 
         # Emit finding to INBOX.
-        summary = last_text.strip().splitlines()[0] if last_text.strip() else f"{inp.skill_name} completed"
-        if truncated:
+        summary = self._last_text.strip().splitlines()[0] if self._last_text.strip() else f"{inp.skill_name} completed"
+        if aborted:
+            summary = f"[ABORTED] {summary}"
+        elif truncated:
             summary = f"[max_iterations reached] {summary}"
-        status = "TRUNCATED" if truncated else "DONE"
+        status = "ABORTED" if aborted else ("TRUNCATED" if truncated else "DONE")
         timestamp = workflow.now().isoformat(timespec="seconds")
         await workflow.execute_activity(
             "emit_finding",
@@ -420,7 +442,7 @@ class ClaudeSkillWorkflow:
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=HAIKU_POLICY,
         )
-        return last_text
+        return self._last_text
 
     async def _dispatch_tool(
         self,
@@ -440,6 +462,16 @@ class ClaudeSkillWorkflow:
             sub_index=sub_index,
             allowed_tool_names=None,  # coordinator: everything allowed
         )
+
+    @workflow.query
+    def get_conversation(self) -> list[dict]:
+        """Return the last 20 messages for inspection."""
+        msgs = getattr(self, "_messages", [])
+        return msgs[-20:]
+
+    @workflow.query
+    def get_last_turn(self) -> str:
+        return getattr(self, "_last_text", "")
 
 
 # ---------------------------------------------------------------------------
