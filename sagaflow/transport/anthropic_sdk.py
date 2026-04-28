@@ -20,6 +20,22 @@ _MAX_DELAY_S = 120.0
 _DEFAULT_MAX_ELAPSED_S = 3600.0  # 1hr safety ceiling; Temporal activity timeout provides defense-in-depth
 
 
+def _fix_schema(schema: dict) -> dict:
+    """Recursively add ``additionalProperties: false`` to all object types."""
+    if not isinstance(schema, dict):
+        return schema
+    schema = dict(schema)
+    if schema.get("type") == "object" and "additionalProperties" not in schema:
+        schema["additionalProperties"] = False
+    for key in ("properties", "items", "anyOf", "oneOf", "allOf"):
+        val = schema.get(key)
+        if isinstance(val, dict):
+            schema[key] = {k: _fix_schema(v) for k, v in val.items()}
+        elif isinstance(val, list):
+            schema[key] = [_fix_schema(v) for v in val]
+    return schema
+
+
 class ModelTier(Enum):
     HAIKU = "claude-haiku-4-5-20251001"
     SONNET = "claude-sonnet-4-6"
@@ -69,7 +85,7 @@ class AnthropicSdkTransport:
                 }
                 if output_schema is not None:
                     stream_kwargs["output_config"] = {
-                        "format": {"type": "json_schema", "schema": output_schema},
+                        "format": {"type": "json_schema", "schema": _fix_schema(output_schema)},
                     }
                 async with self._client.messages.stream(**stream_kwargs) as stream:
                     response = await stream.get_final_message()
