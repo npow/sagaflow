@@ -166,25 +166,3 @@ def _inject_skill_modules() -> None:
 _skills_root = claude_skills_dir()
 if _skills_root.is_dir() and any((_skills_root / d).is_dir() for d in _SKILL_MAP.values()):
     _inject_skill_modules()
-
-
-# ---------------------------------------------------------------------------
-# CI safety net: force-exit after pytest finishes to prevent any C-extension
-# finalization from hanging the process.
-# ---------------------------------------------------------------------------
-_ci_exit_code = [0]
-
-
-def pytest_sessionfinish(session, exitstatus):  # type: ignore[no-untyped-def]
-    _ci_exit_code[0] = exitstatus
-
-
-if os.environ.get("CI"):
-    import atexit
-
-    def _ci_force_exit() -> None:
-        sys.stdout.flush()
-        sys.stderr.flush()
-        os._exit(_ci_exit_code[0])
-
-    atexit.register(_ci_force_exit)
