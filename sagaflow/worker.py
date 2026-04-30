@@ -72,6 +72,11 @@ _DIR_TO_LEGACY = {
     "team-temporal": "team",
     "loop-until-done-temporal": "loop_until_done",
     "flaky-test-diagnoser-temporal": "flaky_test_diagnoser",
+    "investigate-temporal": "investigate",
+    "build-temporal": "build",
+    "monitor-temporal": "monitor",
+    "fix-temporal": "fix",
+    "review-temporal": "review",
     "autopilot-temporal": "autopilot",
 }
 
