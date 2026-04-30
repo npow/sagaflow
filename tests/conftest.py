@@ -23,7 +23,7 @@ if os.environ.get("CI"):
     import types
 
     class _Noop:
-        """Stand-in for decorators, dataclasses, and attribute bags."""
+        """Stand-in for decorators, dataclasses, context managers, and attribute bags."""
 
         def __init__(self, **kw: object) -> None:
             for k, v in kw.items():
@@ -36,6 +36,12 @@ if os.environ.get("CI"):
 
         def __getattr__(self, name: str) -> "_Noop":
             return _Noop()
+
+        def __enter__(self) -> "_Noop":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
 
     class _TemporalStub(types.ModuleType):
         """Auto-vivifying module stub that satisfies any temporalio import."""
