@@ -21,8 +21,6 @@ jobs:
         run: ruff check sagaflow tests
       - name: Type-check
         run: mypy sagaflow
-      - name: Remove temporalio
-        run: pip uninstall -y temporalio
       - name: Test
         timeout-minutes: 5
         env:
