@@ -15,9 +15,7 @@ jobs:
           path: .claude-skills
           token: ${{ secrets.GITHUB_TOKEN }}
       - name: Install
-        run: |
-          pip install -e ".[dev]"
-          pip uninstall -y temporalio
+        run: pip install -e ".[dev]"
       - name: Lint
         run: ruff check sagaflow tests
       - name: Type-check
@@ -26,7 +24,8 @@ jobs:
         timeout-minutes: 5
         env:
           CLAUDE_SKILLS_DIR: ${{ github.workspace }}/.claude-skills
-        run: >
-          pytest -v
-          --ignore=tests/generic --ignore=tests/scenarios --ignore=tests/skills
-          -k "not TestWorkflowAbortSignal and not TestWorkflowStatusQuery and not test_all_activities_dedupes_by_temporal_activity_name"
+        run: |
+          pip uninstall -y temporalio
+          pytest -v \
+            --ignore=tests/generic --ignore=tests/scenarios --ignore=tests/skills \
+            -k "not TestWorkflowAbortSignal and not TestWorkflowStatusQuery and not test_all_activities_dedupes_by_temporal_activity_name"
