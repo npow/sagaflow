@@ -23,4 +23,17 @@ jobs:
         run: mypy sagaflow
       - name: Test
         timeout-minutes: 5
-        run: CLAUDE_SKILLS_DIR=${{ github.workspace }}/.claude-skills pytest -v --ignore=tests/generic --ignore=tests/scenarios --ignore=tests/skills -k "not TestWorkflowAbortSignal and not TestWorkflowStatusQuery"
+        env:
+          CLAUDE_SKILLS_DIR: ${{ github.workspace }}/.claude-skills
+        run: |
+          python -c "
+          import pytest, os
+          code = pytest.main([
+              '-v',
+              '--ignore=tests/generic',
+              '--ignore=tests/scenarios',
+              '--ignore=tests/skills',
+              '-k', 'not TestWorkflowAbortSignal and not TestWorkflowStatusQuery',
+          ])
+          os._exit(code)
+          "
