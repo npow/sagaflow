@@ -22,17 +22,18 @@ jobs:
       - name: Type-check
         run: mypy sagaflow
       - name: Test
+        id: test
+        continue-on-error: true
         timeout-minutes: 5
         env:
           RUNNER_TRACKING_ID: ""
+          CLAUDE_SKILLS_DIR: ${{ github.workspace }}/.claude-skills
         run: |
           pip uninstall -y temporalio
-          python -c "
-          import subprocess, sys, os
-          rc = subprocess.call(
-              [sys.executable, '-m', 'pytest', '-v',
-               '--ignore=tests/generic', '--ignore=tests/scenarios', '--ignore=tests/skills',
-               '-k', 'not TestWorkflowAbortSignal and not TestWorkflowStatusQuery and not test_all_activities_dedupes_by_temporal_activity_name'],
-              env={**os.environ, 'CLAUDE_SKILLS_DIR': '${{ github.workspace }}/.claude-skills'})
-          os._exit(rc)
-          "
+          pytest -v \
+            --ignore=tests/generic --ignore=tests/scenarios --ignore=tests/skills \
+            -k "not TestWorkflowAbortSignal and not TestWorkflowStatusQuery and not test_all_activities_dedupes_by_temporal_activity_name" \
+          && touch /tmp/.tests_passed
+      - name: Verify tests passed
+        if: always()
+        run: test -f /tmp/.tests_passed
