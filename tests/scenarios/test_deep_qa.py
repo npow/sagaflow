@@ -156,7 +156,7 @@ async def test_judge_timeout(tmp_path) -> None:
     config = ScenarioConfig(timeout_roles=["judge-pass-1"])
     fake = make_scenario_fake(_dq_base_fake, config)
     try:
-        result = await _run_dq(tmp_path, fake, "dq-sc-judge-timeout")
+        await _run_dq(tmp_path, fake, "dq-sc-judge-timeout")
         assert_no_hidden_failure(tmp_path)
     except Exception:
         # Timeout propagation is acceptable — not a silent failure

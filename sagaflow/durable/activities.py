@@ -17,7 +17,7 @@ from sagaflow.notify import notify_desktop
 from sagaflow.transport.anthropic_sdk import AnthropicSdkTransport, ModelTier
 from sagaflow.transport.boundary import validate_boundary, validate_text_boundary
 from sagaflow.transport.claude_cli import ClaudeCliTransport
-from sagaflow.transport.dispatcher import DispatchResult, SubagentRequest, dispatch_subagent
+from sagaflow.transport.dispatcher import SubagentRequest, dispatch_subagent
 from sagaflow.transport.structured_output import (
     MalformedResponseError,
     parse_structured,

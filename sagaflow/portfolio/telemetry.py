@@ -8,7 +8,6 @@ import queue
 import sqlite3
 import threading
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 
 from sagaflow.portfolio.db import db_exists, default_db_path

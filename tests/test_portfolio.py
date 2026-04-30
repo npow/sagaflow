@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import time
 from contextlib import ExitStack
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -18,7 +17,6 @@ from sagaflow.portfolio.costs import CostAggregator, TimeWindow, estimate_run_co
 from sagaflow.portfolio.db import (
     CURRENT_SCHEMA_VERSION,
     db_exists,
-    default_db_path,
     get_connection,
     init_db,
 )

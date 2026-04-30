@@ -253,5 +253,5 @@ def test_build_registry_phase3_skips_stubs(tmp_path, clean_skills_modules):
 
         # Phase 2 will fail (RuntimeError), leaving the stub in place.
         # Phase 3 should detect the stub and not call register() on it.
-        registry = build_registry()
+        build_registry()
         # No crash means Phase 3 correctly skipped the stub.

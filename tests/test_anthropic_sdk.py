@@ -250,7 +250,7 @@ async def test_all_retryable_status_codes_are_retried(mock_sleep) -> None:
 
 # -- _fix_schema tests --
 
-from sagaflow.transport.anthropic_sdk import _fix_schema
+from sagaflow.transport.anthropic_sdk import _fix_schema  # noqa: E402
 
 
 def test_fix_schema_adds_additional_properties_to_object() -> None:

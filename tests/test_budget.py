@@ -10,7 +10,7 @@ import pytest
 
 from sagaflow.budget.policy import BudgetPolicy, PolicyLoader
 from sagaflow.budget.ledger import BudgetDecision, BudgetLedger, BudgetStatus
-from sagaflow.budget.enforcer import BudgetEnforcer, BudgetExceededError
+from sagaflow.budget.enforcer import BudgetEnforcer
 from sagaflow.budget.router import TierRouter
 from sagaflow.budget.alerts import fire_threshold_alert
 from sagaflow.budget.registry import get_enforcer, register, unregister
@@ -365,8 +365,6 @@ def test_write_budget_result(tmp_path: Path) -> None:
 
     manifest_file = tmp_path / "run_manifest.json"
     manifest_file.write_text(json.dumps({"run_id": "test", "status": "RUNNING"}))
-    lock_file = tmp_path / ".manifest.lock"
-
     write_budget_result(
         run_dir=tmp_path,
         accumulated_cost_usd=0.42,

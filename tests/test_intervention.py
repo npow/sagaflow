@@ -17,7 +17,7 @@ from click.testing import CliRunner
 
 from sagaflow.cli import main
 from sagaflow.generic.activities import CallClaudeInput, ClaudeResponse
-from sagaflow.intervention import AbortRequestedError, InterventionMixin, _sanitize_abort_reason
+from sagaflow.intervention import AbortRequestedError, _sanitize_abort_reason
 
 
 # ---------------------------------------------------------------------------
@@ -337,7 +337,6 @@ class TestWorkflowStatusQuery:
 
         from sagaflow.durable.activities import emit_finding, finalize_manifest_activity, write_artifact
         from sagaflow.generic.activities import (
-            CallClaudeInput,
             ClaudeResponse,
             generic_tool_adapter_bash_tool,
             generic_tool_adapter_glob_tool,

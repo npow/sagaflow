@@ -978,7 +978,7 @@ def catalog() -> None:
     """Skill capability discovery catalog."""
 
 
-def _get_catalog(force: bool = False) -> "SkillCatalog":  # type: ignore[name-defined]
+def _get_catalog(force: bool = False) -> "SkillCatalog":  # type: ignore[name-defined]  # noqa: F821
     from sagaflow.catalog import build_catalog
     return build_catalog(force=force)
 
@@ -1262,63 +1262,6 @@ def backfill(dry_run: bool, force: bool) -> None:
 
 
 @main.group()
-def test() -> None:
-    """Scenario reliability tests."""
-
-
-@test.command("run")
-@click.option("--skill", help="Only run scenarios for this skill.")
-@click.option("--tag", help="Only run scenarios matching this tag.")
-@click.option("--save", "save_path", type=click.Path(), help="Save JSON report.")
-@click.option("-v", "--verbose", is_flag=True, help="Verbose pytest output.")
-def test_run(skill: str | None, tag: str | None, save_path: str | None, verbose: bool) -> None:
-    """Run scenario reliability tests via pytest."""
-    import subprocess
-    import sys
-
-    cmd = [sys.executable, "-m", "pytest", "tests/scenarios/", "--tb=short"]
-    if verbose:
-        cmd.append("-v")
-    if skill:
-        cmd.extend(["-k", skill.replace("-", "_")])
-    if tag:
-        cmd.extend(["-k", tag])
-
-    if save_path:
-        cmd.extend(["--scenario-report", save_path])
-
-    result = subprocess.run(cmd, cwd=str(Path(__file__).resolve().parent.parent))
-
-    if save_path and Path(save_path).exists():
-        click.echo(f"Report saved to {save_path}")
-
-    sys.exit(result.returncode)
-
-
-@test.command("compare")
-@click.argument("baseline", type=click.Path(exists=True))
-@click.argument("current", type=click.Path(exists=True))
-def test_compare(baseline: str, current: str) -> None:
-    """Compare two scenario test reports."""
-    from tests.scenarios.reporter import compare_reports
-
-    diff = compare_reports(Path(baseline), Path(current))
-    if diff["has_regressions"]:
-        click.secho(f"REGRESSIONS: {diff['regressions']}", fg="red")
-    if diff["improvements"]:
-        click.secho(f"Improvements: {diff['improvements']}", fg="green")
-    if diff["new_scenarios"]:
-        click.echo(f"New: {diff['new_scenarios']}")
-    if diff["removed"]:
-        click.echo(f"Removed: {diff['removed']}")
-    click.echo(
-        f"Baseline: {diff['baseline_total']} | Current: {diff['current_total']}"
-    )
-    if diff["has_regressions"]:
-        raise SystemExit(1)
-
-
-@main.group()
 def cost() -> None:
     """Budget and cost reporting for sagaflow runs."""
 
@@ -1578,7 +1521,7 @@ def portfolio() -> None:
 @portfolio.command("init")
 def portfolio_init() -> None:
     """Create portfolio.db and apply schema migrations. Safe to re-run."""
-    from sagaflow.portfolio.db import default_db_path, init_db
+    from sagaflow.portfolio.db import init_db
 
     path = init_db()
     click.echo(f"Portfolio DB initialized at {path}")
@@ -1826,7 +1769,7 @@ def memory() -> None:
     """Cross-session skill memory: outcomes, recall, patterns."""
 
 
-def _get_memory_db() -> "SkillMemoryDB":  # type: ignore[name-defined]
+def _get_memory_db() -> "SkillMemoryDB":  # type: ignore[name-defined]  # noqa: F821
     from sagaflow.memory.db import SkillMemoryDB
     return SkillMemoryDB.open()
 
