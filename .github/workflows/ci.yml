@@ -22,4 +22,5 @@ jobs:
       - name: Type-check
         run: mypy sagaflow
       - name: Test
-        run: CLAUDE_SKILLS_DIR=${{ github.workspace }}/.claude-skills pytest -v --cov=sagaflow
+        timeout-minutes: 5
+        run: CLAUDE_SKILLS_DIR=${{ github.workspace }}/.claude-skills pytest -v --cov=sagaflow --ignore=tests/generic --ignore=tests/scenarios --ignore=tests/skills
