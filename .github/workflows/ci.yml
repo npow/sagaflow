@@ -37,8 +37,14 @@ jobs:
         run: |
           python3 -c "
           import xml.etree.ElementTree as ET, sys
-          r = ET.parse('/tmp/results.xml').getroot()
-          f, e, t = int(r.get('failures',0)), int(r.get('errors',0)), int(r.get('tests',0))
+          root = ET.parse('/tmp/results.xml').getroot()
+          # xunit2 (pytest 9+): root=<testsuites>, counts on child <testsuite>
+          if root.tag == 'testsuites':
+              ts = root.find('testsuite')
+              if ts is None: print('No testsuite element'); sys.exit(1)
+          else:
+              ts = root
+          f, e, t = int(ts.get('failures',0)), int(ts.get('errors',0)), int(ts.get('tests',0))
           if t == 0: print('No tests recorded'); sys.exit(1)
           if f + e > 0: print(f'FAILED: {f} failures, {e} errors / {t}'); sys.exit(1)
           print(f'OK: {t} tests passed')
