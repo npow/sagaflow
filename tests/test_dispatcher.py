@@ -84,4 +84,4 @@ def test_default_cli_timeout_is_900s() -> None:
         role="r", tier=ModelTier.HAIKU, system_prompt="s",
         user_prompt="u", max_tokens=1, tools_needed=True,
     )
-    assert req.cli_timeout_seconds == 900.0
+    assert req.cli_timeout_seconds == 3600.0

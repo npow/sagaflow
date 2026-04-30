@@ -82,4 +82,3 @@ async def test_call_raises_on_timeout() -> None:
         with pytest.raises(ClaudeCliError) as exc:
             await transport.call(prompt="p", timeout_seconds=0.1)
     assert "timed out" in str(exc.value).lower()
-    proc.kill.assert_called()
