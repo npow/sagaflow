@@ -5,6 +5,8 @@ on: [push, pull_request]
 jobs:
   test:
     runs-on: ubuntu-latest
+    container:
+      image: python:3.11
     steps:
       - uses: actions/checkout@v6
       - uses: actions/checkout@v6
@@ -12,11 +14,10 @@ jobs:
           repository: npow/claude-skills
           path: .claude-skills
           token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
       - name: Install
-        run: pip install -e ".[dev]"
+        run: |
+          pip install -e ".[dev]"
+          pip uninstall -y temporalio
       - name: Lint
         run: ruff check sagaflow tests
       - name: Type-check
@@ -24,9 +25,8 @@ jobs:
       - name: Test
         timeout-minutes: 5
         env:
-          RUNNER_TRACKING_ID: ""
           CLAUDE_SKILLS_DIR: ${{ github.workspace }}/.claude-skills
-        run: |
-          exec pytest -v \
-            --ignore=tests/generic --ignore=tests/scenarios --ignore=tests/skills \
-            -k "not TestWorkflowAbortSignal and not TestWorkflowStatusQuery and not test_all_activities_dedupes_by_temporal_activity_name"
+        run: >
+          pytest -v
+          --ignore=tests/generic --ignore=tests/scenarios --ignore=tests/skills
+          -k "not TestWorkflowAbortSignal and not TestWorkflowStatusQuery and not test_all_activities_dedupes_by_temporal_activity_name"
