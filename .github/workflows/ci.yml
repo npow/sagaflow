@@ -22,18 +22,19 @@ jobs:
       - name: Type-check
         run: mypy sagaflow
       - name: Test
-        id: test
-        continue-on-error: true
         timeout-minutes: 5
         env:
           RUNNER_TRACKING_ID: ""
           CLAUDE_SKILLS_DIR: ${{ github.workspace }}/.claude-skills
         run: |
           pip uninstall -y temporalio
+          set +e
           pytest -v \
             --ignore=tests/generic --ignore=tests/scenarios --ignore=tests/skills \
-            -k "not TestWorkflowAbortSignal and not TestWorkflowStatusQuery and not test_all_activities_dedupes_by_temporal_activity_name" \
-          && touch /tmp/.tests_passed
-      - name: Verify tests passed
-        if: always()
-        run: test -f /tmp/.tests_passed
+            -k "not TestWorkflowAbortSignal and not TestWorkflowStatusQuery and not test_all_activities_dedupes_by_temporal_activity_name"
+          PYTEST_RC=$?
+          set -e
+          # Kill straggler child processes before the runner detects them as orphans
+          pkill -P $$ 2>/dev/null || true
+          sleep 1
+          exit $PYTEST_RC
