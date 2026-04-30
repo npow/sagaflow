@@ -25,4 +25,6 @@ jobs:
         timeout-minutes: 5
         env:
           RUNNER_TRACKING_ID: ""
-        run: CLAUDE_SKILLS_DIR=${{ github.workspace }}/.claude-skills pytest -v --ignore=tests/generic --ignore=tests/scenarios --ignore=tests/skills -k "not TestWorkflowAbortSignal and not TestWorkflowStatusQuery"
+        run: |
+          pip uninstall -y temporalio
+          CLAUDE_SKILLS_DIR=${{ github.workspace }}/.claude-skills pytest -v --ignore=tests/generic --ignore=tests/scenarios --ignore=tests/skills -k "not TestWorkflowAbortSignal and not TestWorkflowStatusQuery"
