@@ -27,19 +27,29 @@ jobs:
           CLAUDE_SKILLS_DIR: ${{ github.workspace }}/.claude-skills
         run: |
           python3 << 'PYEOF'
-          import subprocess, sys, os
+          import subprocess, sys, os, signal
 
-          proc = subprocess.run(
+          # Run pytest in its own session so its temporalio/tokio background
+          # threads are invisible to GitHub Actions' orphan process detector.
+          proc = subprocess.Popen(
               [sys.executable, "-m", "pytest", "-v", "--tb=short",
                "--ignore=tests/generic", "--ignore=tests/scenarios",
                "--ignore=tests/skills",
                "-k", "not TestWorkflowAbortSignal and not TestWorkflowStatusQuery"],
-              capture_output=True, text=True, timeout=240,
-              env={**os.environ},
+              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+              text=True, env={**os.environ},
+              start_new_session=True,
           )
+          try:
+              stdout, stderr = proc.communicate(timeout=240)
+          except subprocess.TimeoutExpired:
+              os.killpg(proc.pid, signal.SIGKILL)
+              proc.wait()
+              print("pytest timed out", file=sys.stderr)
+              sys.exit(1)
 
-          sys.stdout.write(proc.stdout)
-          sys.stderr.write(proc.stderr)
+          sys.stdout.write(stdout)
+          sys.stderr.write(stderr)
 
           if proc.returncode == 0:
               sys.exit(0)
@@ -47,8 +57,8 @@ jobs:
           # temporalio's Rust runtime may segfault during Python shutdown,
           # giving a negative exit code (signal).  If all tests passed,
           # treat this as success.
-          if proc.returncode < 0 and "passed" in proc.stdout and "FAILED" not in proc.stdout:
-              print(f"\npytest was killed by signal {-proc.returncode} during cleanup — all tests passed")
+          if proc.returncode < 0 and "passed" in stdout and "FAILED" not in stdout:
+              print(f"\npytest killed by signal {-proc.returncode} during cleanup — all tests passed")
               sys.exit(0)
 
           sys.exit(1 if proc.returncode < 0 else proc.returncode)
