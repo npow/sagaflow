@@ -68,7 +68,22 @@ strict = true
 python_version = "3.11"
 
 [[tool.mypy.overrides]]
-module = ["sagaflow.generic.*", "sagaflow.missions.*", "sagaflow.cli", "sagaflow.worker"]
+module = [
+    "sagaflow.generic.*",
+    "sagaflow.missions.*",
+    "sagaflow.cli",
+    "sagaflow.worker",
+    "sagaflow.behavior",
+    "sagaflow.compare",
+    "sagaflow.intervention",
+    "sagaflow.manifest",
+    "sagaflow.slack_progress",
+    "sagaflow.durable.*",
+    "sagaflow.memory.*",
+    "sagaflow.portfolio.*",
+    "sagaflow.replay.*",
+    "sagaflow.transport.*",
+]
 ignore_errors = true
 
 [tool.pytest.ini_options]
