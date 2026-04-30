@@ -31,6 +31,9 @@ if os.environ.get("CI"):
 
         def __call__(self, fn: object = None, **kw: object) -> object:  # type: ignore[assignment]
             if fn is not None and callable(fn):
+                defn = _Noop(**{**vars(self), **kw})
+                fn.__temporal_activity_definition = defn  # type: ignore[attr-defined]
+                fn.__temporal_workflow_definition = defn  # type: ignore[attr-defined]
                 return fn
             return _Noop(**kw)
 
@@ -53,6 +56,9 @@ if os.environ.get("CI"):
 
         def __call__(self, fn: object = None, **kw: object) -> object:  # type: ignore[override]
             if fn is not None and callable(fn):
+                defn = _Noop(name=getattr(fn, "__name__", ""))
+                fn.__temporal_activity_definition = defn  # type: ignore[attr-defined]
+                fn.__temporal_workflow_definition = defn  # type: ignore[attr-defined]
                 return fn
             return _Noop(**kw)
 
@@ -162,3 +168,23 @@ if _skills_root.is_dir() and any((_skills_root / d).is_dir() for d in _SKILL_MAP
     _inject_skill_modules()
 
 
+# ---------------------------------------------------------------------------
+# CI safety net: force-exit after pytest finishes to prevent any C-extension
+# finalization from hanging the process.
+# ---------------------------------------------------------------------------
+_ci_exit_code = [0]
+
+
+def pytest_sessionfinish(session, exitstatus):  # type: ignore[no-untyped-def]
+    _ci_exit_code[0] = exitstatus
+
+
+if os.environ.get("CI"):
+    import atexit
+
+    def _ci_force_exit() -> None:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(_ci_exit_code[0])
+
+    atexit.register(_ci_force_exit)
