@@ -21,25 +21,14 @@ jobs:
         run: ruff check sagaflow tests
       - name: Type-check
         run: mypy sagaflow
+      - name: Remove temporalio
+        run: pip uninstall -y temporalio
       - name: Test
         timeout-minutes: 5
         env:
           RUNNER_TRACKING_ID: ""
           CLAUDE_SKILLS_DIR: ${{ github.workspace }}/.claude-skills
         run: |
-          pip uninstall -y temporalio
-          pytest -v --junitxml=/tmp/results.xml \
+          exec pytest -v \
             --ignore=tests/generic --ignore=tests/scenarios --ignore=tests/skills \
-            -k "not TestWorkflowAbortSignal and not TestWorkflowStatusQuery and not test_all_activities_dedupes_by_temporal_activity_name" \
-          || true
-          python3 -c "
-          import xml.etree.ElementTree as ET, sys
-          try:
-              r = ET.parse('/tmp/results.xml').getroot()
-              f, e, t = int(r.get('failures',0)), int(r.get('errors',0)), int(r.get('tests',0))
-              if t == 0: print('No tests recorded'); sys.exit(1)
-              if f + e > 0: print(f'FAILED: {f} failures, {e} errors / {t} tests'); sys.exit(1)
-              print(f'PASSED: {t} tests')
-          except FileNotFoundError:
-              print('No results file - pytest killed before completion'); sys.exit(1)
-          "
+            -k "not TestWorkflowAbortSignal and not TestWorkflowStatusQuery and not test_all_activities_dedupes_by_temporal_activity_name"
