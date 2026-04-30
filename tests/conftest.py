@@ -71,6 +71,18 @@ if os.environ.get("CI"):
         """Meta-path finder that intercepts all ``temporalio.*`` imports."""
 
         @staticmethod
+        def find_spec(
+            fullname: str, path: object = None, target: object = None
+        ) -> object:
+            if fullname == "temporalio" or fullname.startswith("temporalio."):
+                if fullname not in sys.modules:
+                    sys.modules[fullname] = _TemporalStub(fullname)
+                return importlib.util.spec_from_loader(
+                    fullname, loader=None, origin="ci-stub"
+                )
+            return None
+
+        @staticmethod
         def find_module(name: str, path: object = None) -> "_TemporalFinder | None":
             if name == "temporalio" or name.startswith("temporalio."):
                 return _TemporalFinder()
