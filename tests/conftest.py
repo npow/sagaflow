@@ -86,5 +86,10 @@ def _inject_skill_modules() -> None:
             _load_module_from_file(full_name, py_file)
 
 
-# Run at import time so all test modules can use ``from skills.<name>...``.
-_inject_skill_modules()
+# Only inject when the claude-skills directory actually exists and contains
+# skill subdirs.  CI runs unit tests only (--ignore=tests/{generic,scenarios,skills})
+# and doesn't need these imports.  Eagerly loading skills pulls in temporalio
+# whose Rust core segfaults during Python shutdown on GitHub Actions.
+_skills_root = claude_skills_dir()
+if _skills_root.is_dir() and any((_skills_root / d).is_dir() for d in _SKILL_MAP.values()):
+    _inject_skill_modules()

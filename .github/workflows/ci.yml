@@ -7,11 +7,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/checkout@v6
-        with:
-          repository: npow/claude-skills
-          path: .claude-skills
-          token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
@@ -23,4 +18,4 @@ jobs:
         run: mypy sagaflow
       - name: Test
         timeout-minutes: 5
-        run: CLAUDE_SKILLS_DIR=${{ github.workspace }}/.claude-skills pytest -v --ignore=tests/generic --ignore=tests/scenarios --ignore=tests/skills -k "not TestWorkflowAbortSignal and not TestWorkflowStatusQuery"
+        run: pytest -v --ignore=tests/generic --ignore=tests/scenarios --ignore=tests/skills -k "not TestWorkflowAbortSignal and not TestWorkflowStatusQuery"
