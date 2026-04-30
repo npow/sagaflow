@@ -23,17 +23,4 @@ jobs:
         run: mypy sagaflow
       - name: Test
         timeout-minutes: 5
-        env:
-          CLAUDE_SKILLS_DIR: ${{ github.workspace }}/.claude-skills
-        run: |
-          set +e
-          trap 'exit 0' TERM
-          pytest -v --tb=short \
-            --ignore=tests/generic --ignore=tests/scenarios --ignore=tests/skills \
-            -k "not TestWorkflowAbortSignal and not TestWorkflowStatusQuery"
-          rc=$?
-          # pytest exit codes: 0=ok, 1=failures, 2-5=other errors, >128=signal
-          # Signals come from temporalio's Rust runtime crashing during cleanup.
-          # The tests themselves passed — treat as success.
-          if [ $rc -le 5 ]; then exit $rc; fi
-          exit 0
+        run: CLAUDE_SKILLS_DIR=${{ github.workspace }}/.claude-skills pytest -v --ignore=tests/generic --ignore=tests/scenarios --ignore=tests/skills -k "not TestWorkflowAbortSignal and not TestWorkflowStatusQuery"

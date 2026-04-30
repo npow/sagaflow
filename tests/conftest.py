@@ -10,6 +10,7 @@ import paths keep working without touching every test file.
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -93,3 +94,11 @@ def _inject_skill_modules() -> None:
 _skills_root = claude_skills_dir()
 if _skills_root.is_dir() and any((_skills_root / d).is_dir() for d in _SKILL_MAP.values()):
     _inject_skill_modules()
+
+
+def pytest_sessionfinish(session, exitstatus):  # type: ignore[no-untyped-def]
+    # temporalio's Rust/tokio threads cause GitHub Actions to cancel the step
+    # during Python shutdown.  Force-exit immediately after the summary is
+    # printed to kill the process (and all threads) before the runner reacts.
+    if os.environ.get("CI"):
+        os._exit(exitstatus)
