@@ -21,6 +21,8 @@ jobs:
       - name: Type-check
         run: mypy sagaflow
       - name: Test
+        id: test
+        continue-on-error: true
         timeout-minutes: 5
         env:
           CLAUDE_SKILLS_DIR: ${{ github.workspace }}/.claude-skills
@@ -28,4 +30,7 @@ jobs:
           pip uninstall -y temporalio
           pytest -v \
             --ignore=tests/generic --ignore=tests/scenarios --ignore=tests/skills \
-            -k "not TestWorkflowAbortSignal and not TestWorkflowStatusQuery and not test_all_activities_dedupes_by_temporal_activity_name"
+            -k "not TestWorkflowAbortSignal and not TestWorkflowStatusQuery and not test_all_activities_dedupes_by_temporal_activity_name" \
+          && touch /tmp/.tests_passed
+      - name: Verify tests passed
+        run: test -f /tmp/.tests_passed
