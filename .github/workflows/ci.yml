@@ -22,34 +22,34 @@ jobs:
       - name: Type-check
         run: mypy sagaflow
       - name: Test
-        id: tests
-        continue-on-error: true
         timeout-minutes: 5
         env:
           CLAUDE_SKILLS_DIR: ${{ github.workspace }}/.claude-skills
         run: |
-          pytest -v --tb=short \
-            --ignore=tests/generic --ignore=tests/scenarios --ignore=tests/skills \
-            -k "not TestWorkflowAbortSignal and not TestWorkflowStatusQuery" \
-            2>&1 | tee /tmp/test-output.txt
-          echo "PYTEST_RC=${PIPESTATUS[0]}" | tee -a /tmp/test-output.txt
-      - name: Verify test results
-        if: always()
-        run: |
-          if [ "${{ steps.tests.outcome }}" = "success" ]; then
-            echo "Tests passed"
-            exit 0
-          fi
-          # Step failed or was canceled — check actual test results
-          if grep -q "PYTEST_RC=0" /tmp/test-output.txt 2>/dev/null; then
-            echo "Tests passed (step was killed during process cleanup)"
-            exit 0
-          fi
-          if grep -qP "\d+ passed" /tmp/test-output.txt 2>/dev/null && \
-             ! grep -q "FAILED" /tmp/test-output.txt 2>/dev/null; then
-            echo "All executed tests passed (process killed before summary)"
-            exit 0
-          fi
-          echo "Tests failed:"
-          grep "FAILED" /tmp/test-output.txt 2>/dev/null || echo "(no output captured)"
-          exit 1
+          python3 << 'PYEOF'
+          import subprocess, sys, os
+
+          proc = subprocess.run(
+              [sys.executable, "-m", "pytest", "-v", "--tb=short",
+               "--ignore=tests/generic", "--ignore=tests/scenarios",
+               "--ignore=tests/skills",
+               "-k", "not TestWorkflowAbortSignal and not TestWorkflowStatusQuery"],
+              capture_output=True, text=True, timeout=240,
+              env={**os.environ},
+          )
+
+          sys.stdout.write(proc.stdout)
+          sys.stderr.write(proc.stderr)
+
+          if proc.returncode == 0:
+              sys.exit(0)
+
+          # temporalio's Rust runtime may segfault during Python shutdown,
+          # giving a negative exit code (signal).  If all tests passed,
+          # treat this as success.
+          if proc.returncode < 0 and "passed" in proc.stdout and "FAILED" not in proc.stdout:
+              print(f"\npytest was killed by signal {-proc.returncode} during cleanup — all tests passed")
+              sys.exit(0)
+
+          sys.exit(1 if proc.returncode < 0 else proc.returncode)
+          PYEOF
