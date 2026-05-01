@@ -16,6 +16,7 @@ from temporalio.worker import Worker
 from temporalio.worker.workflow_sandbox import SandboxRestrictions, SandboxedWorkflowRunner
 
 from sagaflow.durable.activities import SpawnSubagentInput, emit_finding, finalize_manifest_activity, write_artifact
+from sagaflow.slack_progress import deliver_artifact_to_slack, report_slack_progress
 from sagaflow.temporal_client import TASK_QUEUE
 from skills.autopilot.workflow import AutopilotInput, AutopilotWorkflow
 from skills.deep_plan.workflow import DeepPlanWorkflow
@@ -163,6 +164,51 @@ async def test_autopilot_happy_path(tmp_path) -> None:
     inbox_text = (tmp_path / "INBOX.md").read_text()
     assert "ap-1" in inbox_text
     assert "DONE" in inbox_text
+
+
+async def test_autopilot_spec_propagates_to_child_workflows(tmp_path) -> None:
+    """Spec from expand phase must propagate to plan and exec child workflows via full_task."""
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=TASK_QUEUE,
+            workflows=[
+                AutopilotWorkflow,
+                DeepPlanWorkflow,
+                TeamWorkflow,
+                DeepQaWorkflow,
+                LoopUntilDoneWorkflow,
+            ],
+            activities=[
+                write_artifact, emit_finding, finalize_manifest_activity, _fake,
+                read_text_file, deliver_artifact_to_slack, report_slack_progress,
+            ],
+            workflow_runner=_SANDBOX,
+        ):
+            result = await env.client.execute_workflow(
+                AutopilotWorkflow.run,
+                AutopilotInput(
+                    run_id="ap-prop",
+                    initial_idea="Build a widget",
+                    inbox_path=str(tmp_path / "INBOX.md"),
+                    run_dir=str(tmp_path / "run"),
+                    notify=False,
+                    hard_cap_usd=25.0,
+                    max_revalidation_rounds=2,
+                ),
+                id="ap-prop",
+                task_queue=TASK_QUEUE,
+            )
+    assert "complete" in result
+
+    full_task = (tmp_path / "run" / "full-task.md").read_text()
+    assert "Build a widget" in full_task
+    assert "Build the thing." in full_task, "full-task.md missing spec content"
+
+    exec_task = (tmp_path / "run" / "exec" / "task.md").read_text()
+    assert "Build the thing." in exec_task, (
+        "exec child workflow received idea stub instead of full spec"
+    )
 
 
 async def test_autopilot_budget_exhausted(tmp_path) -> None:
