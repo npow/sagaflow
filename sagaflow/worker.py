@@ -71,6 +71,7 @@ _DIR_TO_LEGACY = {
     "proposal-reviewer-temporal": "proposal_reviewer",
     "team-temporal": "team",
     "loop-until-done-temporal": "loop_until_done",
+    "loop-until-done": "loop_until_done",
     "flaky-test-diagnoser-temporal": "flaky_test_diagnoser",
     "investigate-temporal": "investigate",
     "build-temporal": "build",
