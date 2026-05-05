@@ -45,7 +45,7 @@ class ClaudeCliTransport:
         if model:
             args.extend(["--model", model])
         if dangerously_skip_permissions:
-            args.append("--dangerously-skip-permissions")
+            args.extend(["--permission-mode", "bypassPermissions"])
         elif permission_mode:
             args.extend(["--permission-mode", permission_mode])
         if allowed_tools:

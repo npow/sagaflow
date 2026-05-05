@@ -22,7 +22,7 @@ Contract:
 * Generates a uuid4 for ``subagent_id``.
 * Builds argv with ``--session-id`` (so the subagent is addressable via
   the same session-id that Claude CLI persists under ``~/.claude/``) and
-  ``--dangerously-skip-permissions`` (subagents run fully unattended).
+  ``--permission-mode bypassPermissions`` (subagents run fully unattended).
 * Passes ``start_new_session=True`` to ``subprocess.Popen`` so the new
   process has its own process group — a requirement for
   ``restart_subprocess`` to ``killpg`` cleanly on restart.
@@ -80,7 +80,7 @@ def _build_argv(
 
     The argv mirrors ``run_daemon_once`` in the legacy spawner
     (``--session-id <id>`` and the prompt as the final positional), and
-    adds ``--dangerously-skip-permissions`` because subagents run
+    adds ``--permission-mode bypassPermissions`` because subagents run
     unattended and cannot answer interactive permission prompts.
 
     An optional ``--model <model>`` flag lets the caller pin a non-default
@@ -91,7 +91,7 @@ def _build_argv(
         "claude",
         "--session-id",
         subagent_id,
-        "--dangerously-skip-permissions",
+        "--permission-mode", "bypassPermissions",
     ]
     if model:
         argv += ["--model", model]
