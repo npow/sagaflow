@@ -69,7 +69,13 @@ def _start_workflow(skill: str, args: dict) -> str:  # type: ignore[type-arg]
         # Use the (possibly fallback-rewritten) spec.name for the run id so run
         # ids always reflect the skill actually invoked.
         effective = spec.name
-        run_id = f"{effective}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        # Let skills declare a deterministic ID (e.g. fix-pr-1234) so Temporal
+        # rejects duplicate launches for the same logical unit.
+        run_id = None
+        if spec.workflow_id_fn is not None:
+            run_id = spec.workflow_id_fn(args)
+        if not run_id:
+            run_id = f"{effective}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         from sagaflow.paths import Paths
 
         paths = Paths.from_env()
@@ -106,12 +112,22 @@ def _start_workflow(skill: str, args: dict) -> str:  # type: ignore[type-arg]
                 inbox_path=str(paths.inbox),
                 cli_args=args,
             )
-            handle = await client.start_workflow(
-                spec.workflow_cls.run,
-                wf_input,
-                id=run_id,
-                task_queue=TASK_QUEUE,
-            )
+            from temporalio.service import RPCError
+            try:
+                handle = await client.start_workflow(
+                    spec.workflow_cls.run,
+                    wf_input,
+                    id=run_id,
+                    task_queue=TASK_QUEUE,
+                )
+            except RPCError as exc:
+                if "already started" in str(exc).lower():
+                    raise click.ClickException(
+                        f"Workflow {run_id} is already running. "
+                        f"Use 'sagaflow show {run_id}' to check status, "
+                        f"or 'sagaflow abort {run_id}' to cancel it first."
+                    ) from None
+                raise
             return handle.id
 
         raise NotImplementedError(f"launch wiring missing for skill {effective!r}")

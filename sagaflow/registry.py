@@ -25,6 +25,10 @@ class SkillSpec:
     # Each entry is a (option_name, click.option kwargs) pair. The CLI applies them
     # at dispatch time so each skill declares its own flags.
     cli_options: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+    # Optional: generate a deterministic workflow ID from cli_args.
+    # When set, Temporal rejects duplicate launches for the same logical unit
+    # (e.g. same PR number). Return None to fall back to timestamp-based IDs.
+    workflow_id_fn: Callable[[dict[str, Any]], str | None] | None = None
 
 
 class SkillRegistry:
