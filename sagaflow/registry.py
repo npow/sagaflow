@@ -29,6 +29,8 @@ class SkillSpec:
     # When set, Temporal rejects duplicate launches for the same logical unit
     # (e.g. same PR number). Return None to fall back to timestamp-based IDs.
     workflow_id_fn: Callable[[dict[str, Any]], str | None] | None = None
+    # Max concurrent workflows for this skill. 0 = unlimited.
+    max_concurrent: int = 0
 
 
 class SkillRegistry:

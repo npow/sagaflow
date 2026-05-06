@@ -56,6 +56,14 @@ def _resolve_skill(registry, skill: str, args: dict):  # type: ignore[type-arg] 
     return spec
 
 
+async def _count_running_workflows(client: "Client", skill_prefix: str) -> int:
+    count = 0
+    async for wf in client.list_workflows(f"ExecutionStatus = 'Running'"):
+        if wf.id.startswith(skill_prefix):
+            count += 1
+    return count
+
+
 def _start_workflow(skill: str, args: dict) -> str:  # type: ignore[type-arg]
     import asyncio as _a
     from datetime import datetime
@@ -69,6 +77,16 @@ def _start_workflow(skill: str, args: dict) -> str:  # type: ignore[type-arg]
         # Use the (possibly fallback-rewritten) spec.name for the run id so run
         # ids always reflect the skill actually invoked.
         effective = spec.name
+
+        if spec.max_concurrent > 0:
+            running = await _count_running_workflows(client, effective)
+            if running >= spec.max_concurrent:
+                raise click.ClickException(
+                    f"{effective} already has {running} running workflow(s) "
+                    f"(limit: {spec.max_concurrent}). Use 'sagaflow list' to "
+                    f"see them, or wait for one to finish."
+                )
+
         # Let skills declare a deterministic ID (e.g. fix-pr-1234) so Temporal
         # rejects duplicate launches for the same logical unit.
         run_id = None
