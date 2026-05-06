@@ -383,7 +383,7 @@ def _probe_hook() -> tuple[str, str | None]:
 def _probe_skill_imports() -> tuple[str, str | None]:
     """Validate all skill modules can be imported without errors."""
     from sagaflow.prompts import claude_skills_dir
-    from sagaflow.worker import _DIR_TO_LEGACY
+    from sagaflow.worker import _build_dir_to_module_map
 
     skills_root = claude_skills_dir()
     if not skills_root.is_dir():
@@ -398,6 +398,7 @@ def _probe_skill_imports() -> tuple[str, str | None]:
         pkg.__path__ = [str(skills_root)]
         sys.modules["skills"] = pkg
 
+    dir_to_mod = _build_dir_to_module_map(skills_root)
     failures: list[str] = []
     stubs: dict[str, tuple["Path", str]] = {}
 
@@ -405,21 +406,21 @@ def _probe_skill_imports() -> tuple[str, str | None]:
     for skill_dir in sorted(skills_root.iterdir()):
         if not skill_dir.is_dir():
             continue
-        legacy = _DIR_TO_LEGACY.get(skill_dir.name)
-        if not legacy or legacy in stubs:
+        mod_alias = dir_to_mod.get(skill_dir.name)
+        if not mod_alias or mod_alias in stubs:
             continue
         init_py = skill_dir / "__init__.py"
         if not init_py.exists():
             continue
-        mod_name = f"skills.{legacy}"
+        mod_name = f"skills.{mod_alias}"
         stub = types.ModuleType(mod_name)
         stub.__path__ = [str(skill_dir)]  # type: ignore[attr-defined]
         stub.__file__ = str(init_py)
         sys.modules[mod_name] = stub
-        stubs[legacy] = (skill_dir, mod_name)
+        stubs[mod_alias] = (skill_dir, mod_name)
 
     # Phase 2: exec_module for each skill (cross-skill imports now resolve via stubs)
-    for legacy, (skill_dir, mod_name) in stubs.items():
+    for mod_alias, (skill_dir, mod_name) in stubs.items():
         init_py = skill_dir / "__init__.py"
         try:
             spec = importlib.util.spec_from_file_location(
@@ -431,7 +432,7 @@ def _probe_skill_imports() -> tuple[str, str | None]:
                 sys.modules[mod_name] = mod
                 spec.loader.exec_module(mod)
         except Exception as exc:  # noqa: BLE001
-            failures.append(f"{skill_dir.name} ({legacy}): {exc}")
+            failures.append(f"{skill_dir.name} ({mod_alias}): {exc}")
 
     if failures:
         return ("FAIL", f"{len(failures)} skill(s) failed: {'; '.join(failures)}")

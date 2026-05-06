@@ -59,22 +59,22 @@ def _ensure_skills_package() -> None:
             existing.__path__.insert(0, repo_skills)  # type: ignore[attr-defined]
 
 
-# Map claude-skills directory name -> legacy underscore package name.
-# Only entries that have an __init__.py are considered.
-_DIR_TO_LEGACY = {
-    "hello-world": "hello_world",
-    "deep-qa": "deep_qa",
-    "deep-debug": "deep_debug",
-    "deep-research": "deep_research",
-    "deep-design": "deep_design",
-    "deep-plan": "deep_plan",
-    "team": "team",
-    "loop-until-done": "loop_until_done",
-    "flaky-test-diagnoser": "flaky_test_diagnoser",
-    "build": "build",
-    "monitor": "monitor",
-    "autopilot": "autopilot",
-}
+# Auto-discover skill directory → Python module name mapping.
+# Any skill dir with __init__.py gets a skills.<underscored_name> alias
+# so the Temporal sandbox can resolve imports during workflow validation.
+# No hardcoded consumer list — skills register themselves.
+def _build_dir_to_module_map(skills_root: "Path") -> dict[str, str]:
+    """Map skill directory names to valid Python module names under ``skills.``."""
+    mapping: dict[str, str] = {}
+    if not skills_root.is_dir():
+        return mapping
+    for skill_dir in sorted(skills_root.iterdir()):
+        if not skill_dir.is_dir():
+            continue
+        if not (skill_dir / "__init__.py").exists():
+            continue
+        mapping[skill_dir.name] = skill_dir.name.replace("-", "_")
+    return mapping
 
 
 def _load_skill_module(skill_dir: "Path", mod_name: str) -> "types.ModuleType | None":
@@ -189,51 +189,50 @@ def build_registry() -> SkillRegistry:
 
     skills_root = claude_skills_dir()
     if skills_root.is_dir():
-        # Phase 1: pre-register lightweight stubs for ALL legacy skills so
-        # that cross-skill imports resolve regardless of load order.
+        dir_to_mod = _build_dir_to_module_map(skills_root)
+
+        # Phase 1: pre-register lightweight stubs for ALL skills with
+        # __init__.py so cross-skill imports resolve regardless of load order.
         for skill_dir in sorted(skills_root.iterdir()):
             if not skill_dir.is_dir():
                 continue
-            legacy = _DIR_TO_LEGACY.get(skill_dir.name)
-            if legacy:
+            mod_name = dir_to_mod.get(skill_dir.name)
+            if mod_name:
                 try:
-                    _pre_register_package_stub(skill_dir, legacy)
+                    _pre_register_package_stub(skill_dir, mod_name)
                 except Exception as exc:  # noqa: BLE001
                     _log.warning("failed to pre-register stub for %s: %s", skill_dir.name, exc)
 
-        # Phase 2: register legacy aliases — now safe because stubs exist.
+        # Phase 2: register aliases — now safe because stubs exist.
         for skill_dir in sorted(skills_root.iterdir()):
             if not skill_dir.is_dir():
                 continue
-            legacy = _DIR_TO_LEGACY.get(skill_dir.name)
-            if legacy:
+            mod_name = dir_to_mod.get(skill_dir.name)
+            if mod_name:
                 try:
-                    _register_legacy_aliases(skill_dir, legacy)
+                    _register_legacy_aliases(skill_dir, mod_name)
                 except Exception as exc:  # noqa: BLE001
                     failed_skills[skill_dir.name] = str(exc)
                     _log.warning(
-                        "failed to register legacy aliases for %s: %s",
+                        "failed to register aliases for %s: %s",
                         skill_dir.name, exc, exc_info=True,
                     )
 
-        # Phase 3: register each skill from the already-loaded legacy module
-        # (preferred) or by loading under a `skills.<name>` module name so the
-        # Temporal sandbox can resolve it via the passthrough.
+        # Phase 3: register each skill from the already-loaded module.
         for skill_dir in sorted(skills_root.iterdir()):
             if not skill_dir.is_dir():
                 continue
             init_py = skill_dir / "__init__.py"
             if not init_py.exists():
                 continue
-            legacy = _DIR_TO_LEGACY.get(skill_dir.name)
+            mod_name = dir_to_mod.get(skill_dir.name)
             mod = None
-            if legacy:
-                mod = sys.modules.get(f"skills.{legacy}")
+            if mod_name:
+                mod = sys.modules.get(f"skills.{mod_name}")
                 if getattr(mod, "_is_stub", False):
                     mod = None
-            if mod is None:
-                mod_name = f"skills.{legacy}" if legacy else f"claude_skill_{skill_dir.name.replace('-', '_')}"
-                mod = _load_skill_module(skill_dir, mod_name)
+            if mod is None and mod_name:
+                mod = _load_skill_module(skill_dir, f"skills.{mod_name}")
             try:
                 if mod and hasattr(mod, "register"):
                     mod.register(registry)
