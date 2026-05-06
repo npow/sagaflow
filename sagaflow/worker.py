@@ -26,6 +26,30 @@ _log = logging.getLogger(__name__)
 
 _PASSTHROUGH_MODULES = ("httpx", "anthropic", "sagaflow", "pydantic", "skills", "claude_skill_", "sniffio")
 
+_ACTIVITY_MEM_BUDGET_MB = 600
+
+
+def _default_max_activities() -> int:
+    """Compute max concurrent activities from available memory.
+
+    Each spawn_subagent activity can launch a Claude CLI process (~400-600MB).
+    Reserve 4GB for OS + Temporal + worker overhead, divide the rest by
+    per-activity budget, and clamp to [2, 32].
+    """
+    _OS_RESERVE_MB = 4096
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    total_mb = int(line.split()[1]) / 1024
+                    break
+            else:
+                return 8
+        available_mb = max(0, total_mb - _OS_RESERVE_MB)
+        return max(2, min(32, int(available_mb // _ACTIVITY_MEM_BUDGET_MB)))
+    except Exception:
+        return 8
+
 
 def _build_sandbox_runner() -> SandboxedWorkflowRunner:
     """Sandbox runner with httpx/anthropic/sagaflow allowed through import validation."""
@@ -436,8 +460,17 @@ async def _is_worker_reachable(client: Client) -> bool:
     return len(resp.pollers) > 0
 
 
+def _s6_worker_managed() -> bool:
+    """Return True if an s6 service is managing the sagaflow worker."""
+    return Path("/var/run/s6/services/USER_sagaflow_worker/run").exists()
+
+
 async def ensure_worker_running(*, target: str = DEFAULT_TARGET) -> None:
     """If no worker is polling the queue, fork `sagaflow worker run --detached-child`.
+
+    When an s6 service (USER_sagaflow_worker) is managing the worker, skip
+    auto-spawn — s6 handles restarts and spawning a second worker would
+    double resource usage.
 
     Uses a file lock so concurrent ``sagaflow launch`` invocations don't
     race to spawn multiple workers. The first caller acquires the lock,
@@ -451,13 +484,19 @@ async def ensure_worker_running(*, target: str = DEFAULT_TARGET) -> None:
     if await _is_worker_reachable(client):
         return
 
+    if _s6_worker_managed():
+        _log.info("s6 manages USER_sagaflow_worker; waiting for it instead of auto-spawning")
+        for _ in range(30):
+            await asyncio.sleep(1.0)
+            if await _is_worker_reachable(client):
+                return
+        raise RuntimeError("s6-managed worker did not become reachable within 30s")
+
     lock_path = Paths.from_env().root / ".worker-spawn.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_fd = lock_path.open("w")
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        # Re-check after acquiring lock — another process may have spawned
-        # the worker while we were waiting.
         if await _is_worker_reachable(client):
             return
         log_dir = Paths.from_env().worker_log_dir
@@ -469,7 +508,6 @@ async def ensure_worker_running(*, target: str = DEFAULT_TARGET) -> None:
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
-        # Poll until reachable or timeout.
         for _ in range(30):
             await asyncio.sleep(0.5)
             if await _is_worker_reachable(client):
@@ -527,13 +565,22 @@ async def run_worker(*, target: str = DEFAULT_TARGET) -> None:
         if key not in seen_act:
             seen_act.add(key)
             all_activities.append(act)
+    _max_activities = int(os.environ.get(
+        "SAGAFLOW_MAX_CONCURRENT_ACTIVITIES",
+        str(_default_max_activities()),
+    ))
+    _max_wf_tasks = int(os.environ.get(
+        "SAGAFLOW_MAX_CONCURRENT_WORKFLOW_TASKS",
+        str(max(2, _max_activities // 2)),
+    ))
     worker = Worker(
         client,
         task_queue=TASK_QUEUE,
         workflows=workflows,
         activities=all_activities,
         workflow_runner=_build_sandbox_runner(),
-        max_concurrent_activities=500,
+        max_concurrent_activities=_max_activities,
+        max_concurrent_workflow_tasks=_max_wf_tasks,
         debug_mode=True,
     )
     try:
