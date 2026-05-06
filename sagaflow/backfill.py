@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from sagaflow.behavior import extract_signals
-from sagaflow.manifest import RunManifest, _MANIFEST_FILE, _write_atomic
+from sagaflow.run_manifest import RunManifest, _MANIFEST_FILE, _write_atomic
 
 logger = logging.getLogger(__name__)
 

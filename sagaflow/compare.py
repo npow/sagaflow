@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from sagaflow.manifest import RunManifest, read_manifest
+from sagaflow.run_manifest import RunManifest, read_manifest
 
 logger = logging.getLogger(__name__)
 

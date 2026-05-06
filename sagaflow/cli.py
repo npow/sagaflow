@@ -102,7 +102,7 @@ def _start_workflow(skill: str, args: dict) -> str:  # type: ignore[type-arg]
         run_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            from sagaflow.manifest import initialize_manifest
+            from sagaflow.run_manifest import initialize_manifest
             initialize_manifest(
                 run_dir=run_dir,
                 run_id=run_id,
@@ -1226,7 +1226,7 @@ def compare(run_a: str, run_b: str, fmt: str) -> None:
     """Compare two runs by run-id or path."""
     from pathlib import Path
     from sagaflow.compare import compare_runs, format_comparison
-    from sagaflow.manifest import read_manifest
+    from sagaflow.run_manifest import read_manifest
     from sagaflow.paths import Paths
 
     paths = Paths.from_env()
@@ -1257,7 +1257,7 @@ def compare(run_a: str, run_b: str, fmt: str) -> None:
 @click.option("--status", default=None, help="Filter by status (COMPLETED, FAILED).")
 def history(skill: str | None, limit: int, status: str | None) -> None:
     """List runs with manifest data."""
-    from sagaflow.manifest import read_manifest, _MANIFEST_FILE
+    from sagaflow.run_manifest import read_manifest, _MANIFEST_FILE
     from sagaflow.paths import Paths
 
     paths = Paths.from_env()
@@ -1305,7 +1305,7 @@ def regress(run_a: str, run_b: str) -> None:
     """Check for regression between two runs. Exit 0 = no regression, 2 = regression."""
     from pathlib import Path
     from sagaflow.compare import compare_runs
-    from sagaflow.manifest import read_manifest
+    from sagaflow.run_manifest import read_manifest
     from sagaflow.paths import Paths
 
     paths = Paths.from_env()

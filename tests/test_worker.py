@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from sagaflow.worker import (
-    _DIR_TO_LEGACY,
+    _build_dir_to_module_map,
     _pre_register_package_stub,
     _register_legacy_aliases,
     build_registry,
@@ -201,7 +201,7 @@ def test_build_registry_loads_all_legacy_skills() -> None:
     names = set(registry.names())
     expected = {"hello-world", "deep-qa", "deep-debug", "deep-research",
                 "deep-design", "deep-plan", "autopilot", "loop-until-done",
-                "team", "proposal-reviewer", "flaky-test-diagnoser"}
+                "team", "flaky-test-diagnoser"}
     missing = expected - names
     assert not missing, f"missing skills: {sorted(missing)}"
 
@@ -213,22 +213,19 @@ def test_build_registry_loads_all_legacy_skills() -> None:
 
 def test_build_registry_logs_error_on_failure(tmp_path, caplog, clean_skills_modules):
     """When a skill fails to load, build_registry logs at WARNING + summary ERROR."""
-    bad_skill = tmp_path / "bad-skill-temporal"
+    bad_skill = tmp_path / "bad-skill"
     bad_skill.mkdir()
     (bad_skill / "__init__.py").write_text("raise RuntimeError('boom')")
 
-    patched_legacy = {**_DIR_TO_LEGACY, "bad-skill-temporal": "bad_skill"}
-
     with (
-        patch("sagaflow.worker._DIR_TO_LEGACY", patched_legacy),
         patch("sagaflow.worker.claude_skills_dir", return_value=tmp_path),
         caplog.at_level(logging.WARNING, logger="sagaflow.worker"),
     ):
         build_registry()
 
-    assert any("bad-skill-temporal" in r.message and r.levelno >= logging.WARNING
+    assert any("bad-skill" in r.message and r.levelno >= logging.WARNING
                for r in caplog.records), \
-        f"expected WARNING for bad-skill-temporal, got: {[r.message for r in caplog.records]}"
+        f"expected WARNING for bad-skill, got: {[r.message for r in caplog.records]}"
 
     assert any("skill loading failures" in r.message and r.levelno == logging.ERROR
                for r in caplog.records), \
@@ -237,16 +234,11 @@ def test_build_registry_logs_error_on_failure(tmp_path, caplog, clean_skills_mod
 
 def test_build_registry_phase3_skips_stubs(tmp_path, clean_skills_modules):
     """Phase 3 should not treat an unresolved stub as a real module."""
-    skill_dir = tmp_path / "stub-only-temporal"
+    skill_dir = tmp_path / "stub-only"
     skill_dir.mkdir()
     (skill_dir / "__init__.py").write_text("raise RuntimeError('unreachable')")
 
-    patched_legacy = {"stub-only-temporal": "stub_only"}
-
-    with (
-        patch("sagaflow.worker._DIR_TO_LEGACY", patched_legacy),
-        patch("sagaflow.worker.claude_skills_dir", return_value=tmp_path),
-    ):
+    with patch("sagaflow.worker.claude_skills_dir", return_value=tmp_path):
         _pre_register_package_stub(skill_dir, "stub_only")
         stub = sys.modules["skills.stub_only"]
         stub._is_stub = True

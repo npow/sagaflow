@@ -88,20 +88,21 @@ if os.environ.get("CI"):
 
 from sagaflow.prompts import claude_skills_dir
 
-# Map: old import package name -> claude-skills directory name
-_SKILL_MAP = {
-    "hello_world": "hello-world-temporal",
-    "deep_qa": "deep-qa-temporal",
-    "deep_debug": "deep-debug-temporal",
-    "deep_research": "deep-research-temporal",
-    "deep_design": "deep-design-temporal",
-    "deep_plan": "deep-plan-temporal",
-    "proposal_reviewer": "proposal-reviewer-temporal",
-    "team": "team-temporal",
-    "loop_until_done": "loop-until-done-temporal",
-    "flaky_test_diagnoser": "flaky-test-diagnoser-temporal",
-    "autopilot": "autopilot-temporal",
-}
+def _discover_skill_map() -> dict[str, str]:
+    """Auto-discover skill dirs with __init__.py → {python_name: dir_name}."""
+    root = claude_skills_dir()
+    if not root.is_dir():
+        return {}
+    mapping: dict[str, str] = {}
+    for skill_dir in sorted(root.iterdir()):
+        if not skill_dir.is_dir():
+            continue
+        if not (skill_dir / "__init__.py").exists():
+            continue
+        mapping[skill_dir.name.replace("-", "_")] = skill_dir.name
+    return mapping
+
+_SKILL_MAP = _discover_skill_map()
 
 
 def _load_module_from_file(mod_name: str, file_path: Path):
@@ -118,26 +119,40 @@ def _load_module_from_file(mod_name: str, file_path: Path):
 
 
 def _inject_skill_modules() -> None:
-    """Populate ``sys.modules`` so ``from skills.<name>.<submod>`` resolves."""
+    """Populate ``sys.modules`` so ``from skills.<name>.<submod>`` resolves.
+
+    Uses three-phase loading (matching worker.py) to handle cross-skill
+    imports like autopilot -> deep_plan.
+    """
     root = claude_skills_dir()
 
-    # Ensure the top-level ``skills`` package exists in sys.modules.
-    # Include the repo's skills/ directory in __path__ so that
-    # ``from skills import generic`` (the in-repo generic interpreter)
-    # still works alongside the dynamically-loaded claude-skills modules.
     repo_skills_dir = str(Path(__file__).resolve().parent.parent / "skills")
     if "skills" not in sys.modules:
         import types
         skills_pkg = types.ModuleType("skills")
-        skills_pkg.__path__ = [repo_skills_dir]  # type: ignore[attr-defined]
+        skills_pkg.__path__ = [repo_skills_dir]
         skills_pkg.__package__ = "skills"
         sys.modules["skills"] = skills_pkg
     else:
-        # If skills already exists, ensure the repo path is on __path__
         existing = sys.modules["skills"]
         if hasattr(existing, "__path__") and repo_skills_dir not in existing.__path__:
             existing.__path__.insert(0, repo_skills_dir)
 
+    # Phase 1: pre-register stubs so cross-skill imports resolve.
+    for old_name, dir_name in _SKILL_MAP.items():
+        skill_dir = root / dir_name
+        if not skill_dir.is_dir():
+            continue
+        pkg_name = f"skills.{old_name}"
+        if pkg_name not in sys.modules:
+            import types
+            stub = types.ModuleType(pkg_name)
+            stub.__path__ = [str(skill_dir)]
+            stub.__package__ = pkg_name
+            stub._is_stub = True
+            sys.modules[pkg_name] = stub
+
+    # Phase 2: load real modules (stubs allow cross-skill imports to resolve).
     for old_name, dir_name in _SKILL_MAP.items():
         skill_dir = root / dir_name
         if not skill_dir.is_dir():
@@ -145,12 +160,19 @@ def _inject_skill_modules() -> None:
 
         pkg_name = f"skills.{old_name}"
 
-        # Register the skill package itself (from __init__.py)
         init_py = skill_dir / "__init__.py"
         if init_py.exists():
-            _load_module_from_file(pkg_name, init_py)
+            existing = sys.modules.get(pkg_name)
+            if existing is None or getattr(existing, "_is_stub", False):
+                spec = importlib.util.spec_from_file_location(
+                    pkg_name, str(init_py),
+                    submodule_search_locations=[str(skill_dir)],
+                )
+                if spec and spec.loader:
+                    mod = importlib.util.module_from_spec(spec)
+                    sys.modules[pkg_name] = mod
+                    spec.loader.exec_module(mod)
 
-        # Register each .py submodule (workflow.py, activities.py, state.py, etc.)
         for py_file in sorted(skill_dir.glob("*.py")):
             if py_file.name == "__init__.py":
                 continue
@@ -163,6 +185,5 @@ def _inject_skill_modules() -> None:
 # skill subdirs.  CI runs unit tests only (--ignore=tests/{generic,scenarios,skills})
 # and doesn't need these imports.  Eagerly loading skills pulls in temporalio
 # whose Rust core segfaults during Python shutdown on GitHub Actions.
-_skills_root = claude_skills_dir()
-if _skills_root.is_dir() and any((_skills_root / d).is_dir() for d in _SKILL_MAP.values()):
+if _SKILL_MAP:
     _inject_skill_modules()

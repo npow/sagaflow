@@ -330,7 +330,7 @@ class ClaudeSkillWorkflow(InterventionMixin):
         finally:
             if self._budget_enforcer and inp.run_dir:
                 from sagaflow.budget.registry import unregister as _budget_unregister
-                from sagaflow.manifest import write_budget_result
+                from sagaflow.run_manifest import write_budget_result
                 ledger = self._budget_enforcer.ledger
                 write_budget_result(
                     run_dir=Path(inp.run_dir),

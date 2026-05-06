@@ -361,7 +361,7 @@ def test_alert_posts_to_slack(mock_post: object) -> None:
 
 
 def test_write_budget_result(tmp_path: Path) -> None:
-    from sagaflow.manifest import write_budget_result, _read_manifest
+    from sagaflow.run_manifest import write_budget_result, _read_manifest
 
     manifest_file = tmp_path / "run_manifest.json"
     manifest_file.write_text(json.dumps({"run_id": "test", "status": "RUNNING"}))

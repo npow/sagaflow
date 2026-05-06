@@ -284,7 +284,7 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
 
     if inp.run_dir:
         try:
-            from sagaflow.manifest import StepRecord, append_step as _append_step
+            from sagaflow.run_manifest import StepRecord, append_step as _append_step
             _append_step(
                 Path(inp.run_dir),
                 StepRecord(
@@ -399,7 +399,7 @@ class FinalizeManifestInput:
 
 @activity.defn(name="finalize_manifest")
 async def finalize_manifest_activity(inp: FinalizeManifestInput) -> None:
-    from sagaflow.manifest import finalize_manifest
+    from sagaflow.run_manifest import finalize_manifest
 
     termination = {"label": inp.termination_label} if inp.termination_label else None
     finalize_manifest(

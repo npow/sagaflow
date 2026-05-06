@@ -8,6 +8,12 @@ Anthropic or claude -p calls.
 from __future__ import annotations
 
 import json
+import sys
+
+import pytest
+
+if "skills.proposal_reviewer" not in sys.modules:
+    pytest.skip("proposal-reviewer skill not installed", allow_module_level=True)
 
 from temporalio import activity
 from temporalio.testing import WorkflowEnvironment

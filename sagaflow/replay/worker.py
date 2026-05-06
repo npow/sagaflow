@@ -78,7 +78,7 @@ async def replay_spawn_subagent(inp: _SpawnSubagentInput) -> dict[str, str]:
     )
 
     if inp.run_dir:
-        from sagaflow.manifest import StepRecord, append_step
+        from sagaflow.run_manifest import StepRecord, append_step
         append_step(
             Path(inp.run_dir),
             StepRecord(
