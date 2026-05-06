@@ -405,3 +405,46 @@ async def finalize_manifest_activity(inp: FinalizeManifestInput) -> None:
         termination=termination,
         error=inp.error or None,
     )
+
+
+@dataclass(frozen=True)
+class RunShellInput:
+    command: str
+    cwd: str = ""
+    timeout_seconds: float = 300.0
+    env: dict[str, str] | None = None
+    label: str = ""
+
+
+@dataclass(frozen=True)
+class RunShellResult:
+    stdout: str
+    stderr: str
+    exit_code: int
+    timed_out: bool = False
+
+
+@activity.defn(name="run_shell")
+async def run_shell_activity(inp: RunShellInput) -> RunShellResult:
+    """Run a shell command deterministically. No agent — just subprocess."""
+    activity.heartbeat(f"running: {inp.label or inp.command[:80]}")
+    env = {**dict(__import__("os").environ), **(inp.env or {})}
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            inp.command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=inp.cwd or None,
+            env=env,
+        )
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            proc.communicate(), timeout=inp.timeout_seconds
+        )
+        return RunShellResult(
+            stdout=stdout_bytes.decode("utf-8", errors="replace")[-10000:],
+            stderr=stderr_bytes.decode("utf-8", errors="replace")[-5000:],
+            exit_code=proc.returncode or 0,
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        return RunShellResult(stdout="", stderr="timeout", exit_code=124, timed_out=True)

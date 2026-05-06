@@ -431,7 +431,8 @@ async def run_worker(*, target: str = DEFAULT_TARGET) -> None:
         report_slack_state_change as _state_change_act,
     )
     from sagaflow.durable.activities import finalize_manifest_activity as _finalize_act
-    combined.extend([_slack_progress_act, _deliver_artifact_act, _slack_failure_act, _state_change_act, _finalize_act])
+    from sagaflow.durable.activities import run_shell_activity as _run_shell_act
+    combined.extend([_slack_progress_act, _deliver_artifact_act, _slack_failure_act, _state_change_act, _finalize_act, _run_shell_act])
     from sagaflow.memory.activities import commit_outcome as _commit_outcome_act, recall_outcomes as _recall_outcomes_act
     combined.extend([_commit_outcome_act, _recall_outcomes_act])
     try:
