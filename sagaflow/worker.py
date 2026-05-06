@@ -62,23 +62,18 @@ def _ensure_skills_package() -> None:
 # Map claude-skills directory name -> legacy underscore package name.
 # Only entries that have an __init__.py are considered.
 _DIR_TO_LEGACY = {
-    "hello-world-temporal": "hello_world",
-    "deep-qa-temporal": "deep_qa",
-    "deep-debug-temporal": "deep_debug",
-    "deep-research-temporal": "deep_research",
-    "deep-design-temporal": "deep_design",
-    "deep-plan-temporal": "deep_plan",
-    "proposal-reviewer-temporal": "proposal_reviewer",
-    "team-temporal": "team",
-    "loop-until-done-temporal": "loop_until_done",
+    "hello-world": "hello_world",
+    "deep-qa": "deep_qa",
+    "deep-debug": "deep_debug",
+    "deep-research": "deep_research",
+    "deep-design": "deep_design",
+    "deep-plan": "deep_plan",
+    "team": "team",
     "loop-until-done": "loop_until_done",
-    "flaky-test-diagnoser-temporal": "flaky_test_diagnoser",
-    "investigate-temporal": "investigate",
-    "build-temporal": "build",
-    "monitor-temporal": "monitor",
-    "fix-temporal": "fix",
-    "review-temporal": "review",
-    "autopilot-temporal": "autopilot",
+    "flaky-test-diagnoser": "flaky_test_diagnoser",
+    "build": "build",
+    "monitor": "monitor",
+    "autopilot": "autopilot",
 }
 
 
