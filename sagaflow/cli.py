@@ -77,14 +77,17 @@ def _start_workflow(skill: str, args: dict) -> str:  # type: ignore[type-arg]
         run_dir = paths.run_dir_for(run_id)
         run_dir.mkdir(parents=True, exist_ok=True)
 
-        from sagaflow.manifest import initialize_manifest
-        initialize_manifest(
-            run_dir=run_dir,
-            run_id=run_id,
-            skill=spec.name,
-            args={k: str(v) for k, v in args.items() if not str(k).startswith("_")},
-            input_path=str(args.get("path", "")) or None,
-        )
+        try:
+            from sagaflow.manifest import initialize_manifest
+            initialize_manifest(
+                run_dir=run_dir,
+                run_id=run_id,
+                skill=spec.name,
+                args={k: str(v) for k, v in args.items() if not str(k).startswith("_")},
+                input_path=str(args.get("path", "")) or None,
+            )
+        except ImportError:
+            pass
 
         slack_channel = args.pop("_slack_channel", None)
         slack_thread_ts = args.pop("_slack_thread_ts", None)

@@ -96,6 +96,78 @@ def load_claude_skill_prompt(
     return _read_and_substitute(prompt_path, substitutions)
 
 
+def auto_load_prompts(
+    skill_name: str,
+    *,
+    substitutions: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Glob ``~/.claude/skills/<skill_name>/prompts/*.md`` and return all prompts.
+
+    Returns a dict keyed by filename stem (e.g. ``"hypothesis.system"``).
+    Eliminates the triple-declaration problem: prompt files on disk are the
+    single source of truth — no matching Input dataclass fields or
+    ``_build_input`` load calls required.
+
+    Raises ``PromptNotFoundError`` if the prompts directory doesn't exist.
+    """
+    prompts_dir = claude_skills_dir() / skill_name / "prompts"
+    if not prompts_dir.is_dir():
+        raise PromptNotFoundError(
+            f"prompts directory not found: {prompts_dir}"
+        )
+    result: dict[str, str] = {}
+    for md_file in sorted(prompts_dir.glob("*.md")):
+        content = _read_and_substitute(md_file, substitutions)
+        result[md_file.stem] = content
+    if not result:
+        raise PromptNotFoundError(
+            f"no .md files found in {prompts_dir}"
+        )
+    return result
+
+
+def prompt_bundle(prompts: dict[str, str]) -> _PromptBundle:
+    """Wrap a prompts dict for access with loud errors on missing keys."""
+    return _PromptBundle(prompts)
+
+
+class _PromptBundle:
+    """Thin wrapper that fails loudly when a workflow accesses a missing prompt."""
+
+    __slots__ = ("_prompts",)
+
+    def __init__(self, prompts: dict[str, str]) -> None:
+        self._prompts = dict(prompts)
+
+    def __getitem__(self, key: str) -> str:
+        try:
+            return self._prompts[key]
+        except KeyError:
+            available = sorted(self._prompts)
+            raise PromptNotFoundError(
+                f"prompt {key!r} not found; available: {available}"
+            ) from None
+
+    def get(self, key: str, default: str = "") -> str:
+        return self._prompts.get(key, default)
+
+    def sub(self, key: str, **substitutions: str) -> str:
+        """Get a prompt and apply template substitutions."""
+        raw = self[key]
+        if not substitutions:
+            return raw
+        try:
+            return Template(raw).substitute(substitutions)
+        except KeyError as exc:
+            raise PromptTemplateError(
+                f"prompt {key!r} references ${{{exc.args[0]}}} but no value was provided "
+                f"(available: {sorted(substitutions)})"
+            ) from exc
+
+    def keys(self) -> list[str]:
+        return sorted(self._prompts)
+
+
 def _read_and_substitute(
     prompt_path: Path, substitutions: dict[str, str] | None
 ) -> str:

@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import os
 import signal
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 
 class ClaudeCliError(RuntimeError):
@@ -17,6 +21,9 @@ class ClaudeCliResult:
     stdout: str
     stderr: str
     exit_code: int
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_cost_usd: float = 0.0
 
 
 class ClaudeCliTransport:
@@ -37,7 +44,7 @@ class ClaudeCliTransport:
         dangerously_skip_permissions: bool = False,
         mcp_config_path: str | None = None,
     ) -> ClaudeCliResult:
-        args = [self._command, "-p"]
+        args = [self._command, "-p", "--output-format", "json"]
         if mcp_config_path:
             args.extend(["--strict-mcp-config", "--mcp-config", mcp_config_path])
         if label:
@@ -75,11 +82,40 @@ class ClaudeCliTransport:
         stderr = stderr_bytes.decode("utf-8", errors="replace")
         if process.returncode != 0:
             if stdout.strip() and "Hook cancelled" in stderr:
-                return ClaudeCliResult(stdout=stdout, stderr=stderr, exit_code=process.returncode or 1)
+                return _parse_json_result(stdout, stderr, process.returncode or 1)
             raise ClaudeCliError(
                 f"`{self._command} -p` exited with exit code {process.returncode}: {stderr.strip()}"
             )
-        return ClaudeCliResult(stdout=stdout, stderr=stderr, exit_code=process.returncode or 0)
+        return _parse_json_result(stdout, stderr, process.returncode or 0)
+
+
+def _parse_json_result(stdout: str, stderr: str, exit_code: int) -> ClaudeCliResult:
+    """Extract text result and usage from ``--output-format json`` output."""
+    input_tokens = 0
+    output_tokens = 0
+    total_cost_usd = 0.0
+    result_text = stdout
+
+    try:
+        data = json.loads(stdout)
+        result_text = data.get("result", stdout)
+        total_cost_usd = float(data.get("total_cost_usd", 0))
+        usage = data.get("usage", {})
+        input_tokens = int(usage.get("input_tokens", 0)) + int(
+            usage.get("cache_creation_input_tokens", 0)
+        ) + int(usage.get("cache_read_input_tokens", 0))
+        output_tokens = int(usage.get("output_tokens", 0))
+    except (json.JSONDecodeError, ValueError, TypeError):
+        logger.warning("Failed to parse JSON from claude CLI output; cost will not be tracked")
+
+    return ClaudeCliResult(
+        stdout=result_text,
+        stderr=stderr,
+        exit_code=exit_code,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_cost_usd=total_cost_usd,
+    )
 
 
 async def _terminate(process: asyncio.subprocess.Process) -> None:

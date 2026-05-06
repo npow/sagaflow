@@ -283,21 +283,24 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
                 )
 
     if inp.run_dir:
-        from sagaflow.manifest import StepRecord, append_step as _append_step
-        _append_step(
-            Path(inp.run_dir),
-            StepRecord(
-                step=inp.step_index,
-                role=inp.role,
-                model=dr.model,
-                tier=effective_tier_name,
-                input_tokens=dr.input_tokens,
-                output_tokens=dr.output_tokens,
-                duration_seconds=elapsed,
-                status="ok",
-                output_schema_used=inp.output_schema is not None,
-            ),
-        )
+        try:
+            from sagaflow.manifest import StepRecord, append_step as _append_step
+            _append_step(
+                Path(inp.run_dir),
+                StepRecord(
+                    step=inp.step_index,
+                    role=inp.role,
+                    model=dr.model,
+                    tier=effective_tier_name,
+                    input_tokens=dr.input_tokens,
+                    output_tokens=dr.output_tokens,
+                    duration_seconds=elapsed,
+                    status="ok",
+                    output_schema_used=inp.output_schema is not None,
+                ),
+            )
+        except Exception:
+            pass
 
     raw = dr.text
     _token_meta = {

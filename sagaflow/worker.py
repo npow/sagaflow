@@ -251,6 +251,10 @@ def build_registry() -> SkillRegistry:
     except ImportError:
         pass
 
+    # Manifest-driven skills: scan for SKILL.md files with execution: frontmatter.
+    # These use the shared ManifestWorkflow instead of per-skill workflow.py.
+    _register_manifested_skills(registry, skills_root)
+
     if failed_skills:
         _log.error(
             "skill loading failures (%d): %s",
@@ -259,6 +263,70 @@ def build_registry() -> SkillRegistry:
         )
 
     return registry
+
+
+def _register_manifested_skills(registry: SkillRegistry, skills_root: "Path") -> None:
+    """Register skills that have execution: frontmatter in SKILL.md.
+
+    These use ManifestWorkflow (a single shared Temporal workflow class)
+    instead of per-skill workflow.py files. Skills already registered
+    via __init__.py are skipped — manifest takes effect only when the
+    legacy workflow.py is removed.
+    """
+    if not skills_root.is_dir():
+        return
+
+    try:
+        from sagaflow.manifest.temporal import (
+            ManifestWorkflow,
+            load_manifest,
+            llm_call_activity,
+            resolve_skill_root_activity,
+            ManifestInput,
+        )
+    except ImportError:
+        _log.debug("manifest module not available, skipping manifest discovery")
+        return
+
+    for skill_dir in sorted(skills_root.iterdir()):
+        if not skill_dir.is_dir():
+            continue
+        skill_md = skill_dir / "SKILL.md"
+        if not skill_md.exists():
+            continue
+        # Skip skills already registered via __init__.py (legacy path).
+        if skill_dir.name in registry.names():
+            continue
+        try:
+            manifest = load_manifest(skill_dir)
+        except (ValueError, Exception):
+            continue
+        # This skill has execution: frontmatter and no legacy registration.
+        # Register it under the shared ManifestWorkflow.
+        def _build_manifest_input(
+            *, run_id: str, run_dir: str, inbox_path: str,
+            cli_args: dict, _slug: str = skill_dir.name,
+        ) -> ManifestInput:
+            user_inputs = {
+                k: v for k, v in cli_args.items()
+                if not k.startswith("_")
+            }
+            return ManifestInput(
+                skill_slug=_slug,
+                inputs=user_inputs,
+                run_dir=run_dir,
+                run_id=run_id,
+                inbox_path=inbox_path,
+            )
+
+        from sagaflow.registry import SkillSpec
+        registry.register(SkillSpec(
+            name=skill_dir.name,
+            workflow_cls=ManifestWorkflow,
+            activities=[llm_call_activity, resolve_skill_root_activity],
+            build_input=_build_manifest_input,
+        ))
+        _log.info("registered manifested skill: %s", skill_dir.name)
 
 
 def build_extra_workflows() -> list:
@@ -272,6 +340,11 @@ def build_extra_workflows() -> list:
     here since they don't correspond to a skill in the SkillRegistry.
     """
     extras: list = []
+    try:
+        from sagaflow.manifest.temporal import ManifestWorkflow
+        extras.append(ManifestWorkflow)
+    except ImportError:
+        pass
     try:
         from skills import generic as generic_skill
         extras.extend(generic_skill.extra_workflows())
@@ -463,9 +536,12 @@ async def run_worker(*, target: str = DEFAULT_TARGET) -> None:
         max_concurrent_activities=500,
         debug_mode=True,
     )
-    from sagaflow.manifest import cleanup_stale_runs
-    cleaned = cleanup_stale_runs()
-    if cleaned:
-        _log.info('cleaned up %d stale runs on startup', cleaned)
+    try:
+        from sagaflow.manifest import cleanup_stale_runs
+        cleaned = cleanup_stale_runs()
+        if cleaned:
+            _log.info('cleaned up %d stale runs on startup', cleaned)
+    except ImportError:
+        pass
 
     await worker.run()

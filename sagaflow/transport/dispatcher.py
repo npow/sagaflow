@@ -54,7 +54,12 @@ async def dispatch_subagent(
             dangerously_skip_permissions=True,
             mcp_config_path=request.mcp_config_path,
         )
-        return DispatchResult(text=result.stdout)
+        return DispatchResult(
+            text=result.stdout,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            model=model_alias,
+        )
 
     sdk_result = await sdk_transport.call(
         tier=request.tier,
