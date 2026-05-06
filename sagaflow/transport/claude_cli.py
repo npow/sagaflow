@@ -50,12 +50,15 @@ class ClaudeCliTransport:
             args.extend(["--permission-mode", permission_mode])
         if allowed_tools:
             args.extend(["--allowedTools", *allowed_tools])
+        env = os.environ.copy()
+        env["IS_SANDBOX"] = "1"
         process = await asyncio.create_subprocess_exec(
             *args,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
+            env=env,
         )
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
