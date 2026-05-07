@@ -488,6 +488,69 @@ def _probe_skill_imports() -> tuple[str, str | None]:
     return ("OK", f"{len(stubs)} skills validated")
 
 
+def _probe_sandbox_lint() -> tuple[str, str | None]:
+    """Scan workflow.py files for patterns that break in Temporal's sandbox.
+
+    The sandbox blocks bare imports of stdlib modules (os, sys, subprocess, etc.)
+    inside workflow functions. These must be in module-level
+    ``with workflow.unsafe.imports_passed_through():`` blocks instead.
+    """
+    import ast
+    import re
+
+    from sagaflow.prompts import claude_skills_dir
+
+    skills_root = claude_skills_dir()
+    if not skills_root.is_dir():
+        return ("OK", "no skills dir")
+
+    FORBIDDEN_MODULES = {"os", "sys", "subprocess", "shutil", "pathlib", "signal", "socket"}
+    violations: list[str] = []
+
+    for skill_dir in sorted(skills_root.iterdir()):
+        if not skill_dir.is_dir() or ".bak." in skill_dir.name:
+            continue
+        wf = skill_dir / "workflow.py"
+        if not wf.exists():
+            continue
+        try:
+            tree = ast.parse(wf.read_text(encoding="utf-8"), filename=str(wf))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for child in ast.walk(node):
+                if isinstance(child, ast.Import):
+                    for alias in child.names:
+                        mod = alias.name.split(".")[0]
+                        if mod in FORBIDDEN_MODULES:
+                            violations.append(
+                                f"{skill_dir.name}/workflow.py:{child.lineno} "
+                                f"imports '{alias.name}' inside function — "
+                                f"move to module-level imports_passed_through block"
+                            )
+                elif isinstance(child, ast.ImportFrom) and child.module:
+                    mod = child.module.split(".")[0]
+                    if mod in FORBIDDEN_MODULES:
+                        violations.append(
+                            f"{skill_dir.name}/workflow.py:{child.lineno} "
+                            f"imports from '{child.module}' inside function — "
+                            f"move to module-level imports_passed_through block"
+                        )
+                elif isinstance(child, ast.Attribute) and isinstance(child.value, ast.Name):
+                    if child.value.id in FORBIDDEN_MODULES and child.attr in ("environ", "getenv", "path"):
+                        violations.append(
+                            f"{skill_dir.name}/workflow.py:{child.lineno} "
+                            f"uses '{child.value.id}.{child.attr}' inside function — "
+                            f"read at module level instead"
+                        )
+
+    if violations:
+        return ("FAIL", "; ".join(violations))
+    return ("OK", f"no sandbox violations found")
+
+
 @main.command()
 def doctor() -> None:
     """Run preflight checks."""
@@ -497,6 +560,7 @@ def doctor() -> None:
         ("worker", _probe_worker),
         ("hook", _probe_hook),
         ("skill-imports", _probe_skill_imports),
+        ("sandbox-lint", _probe_sandbox_lint),
     ]
     any_fail = False
     for label, probe in checks:
