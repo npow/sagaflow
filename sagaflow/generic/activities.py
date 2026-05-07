@@ -27,7 +27,7 @@ from anthropic import AsyncAnthropic
 from temporalio import activity
 
 from sagaflow.durable.activities import _heartbeat_loop
-from sagaflow.transport.anthropic_sdk import ModelTier
+from sagaflow.engine import TIER_TO_MODEL
 
 # Safety caps applied inside the activities regardless of what Claude requests.
 _READ_FILE_DEFAULT_MAX_BYTES = 1_048_576  # 1 MiB
@@ -66,24 +66,25 @@ class ClaudeResponse:
     output_tokens: int = 0
 
 
-# Tool-passing approach: the existing AnthropicSdkTransport.call() doesn't expose
-# a `tools` kwarg, so we talk to `anthropic.AsyncAnthropic` directly here. This
-# is less invasive than extending the transport (which only handles non-tool
-# single-shot prompts) and keeps the tool-use path self-contained.
+# Tool-passing approach: talks to `anthropic.AsyncAnthropic` directly for
+# tool-use calls. The pydantic-ai engine handles non-tool SDK calls; this
+# keeps the tool-use path self-contained.
 def _get_anthropic_client() -> AsyncAnthropic:
     base_url = os.environ.get("ANTHROPIC_BASE_URL")
     api_key = os.environ.get("ANTHROPIC_API_KEY", "sk-dummy")
     return AsyncAnthropic(base_url=base_url, api_key=api_key)
 
 
-def _resolve_tier(tier_name: str) -> ModelTier:
-    try:
-        return ModelTier[tier_name]
-    except KeyError as exc:
-        valid = ", ".join(t.name for t in ModelTier)
+def _resolve_model_id(tier_name: str) -> str:
+    """Map a tier name (HAIKU/SONNET/OPUS) to a concrete model ID."""
+    model = TIER_TO_MODEL.get(tier_name)
+    if model is None:
+        valid = ", ".join(TIER_TO_MODEL.keys())
         raise ValueError(
             f"invalid tier_name {tier_name!r}; must be one of: {valid}"
-        ) from exc
+        )
+    # TIER_TO_MODEL values are "anthropic:model-id"; strip the prefix.
+    return model.split(":", 1)[-1] if ":" in model else model
 
 
 def _extract_content(response) -> tuple[str, list[ClaudeToolUse]]:
@@ -113,7 +114,7 @@ async def call_claude_with_tools(inp: CallClaudeInput) -> ClaudeResponse:
     matching the `spawn_subagent` pattern so workflows can set a reasonable
     `heartbeat_timeout` without false-tripping on slow LLM responses.
     """
-    tier = _resolve_tier(inp.tier_name)
+    model_id = _resolve_model_id(inp.tier_name)
     client = _get_anthropic_client()
 
     beat_task: asyncio.Task[None] | None = None
@@ -124,7 +125,7 @@ async def call_claude_with_tools(inp: CallClaudeInput) -> ClaudeResponse:
 
     try:
         api_kwargs: dict = {
-            "model": tier.model_id,
+            "model": model_id,
             "max_tokens": inp.max_tokens,
             "system": inp.system_prompt,
             "messages": inp.messages,

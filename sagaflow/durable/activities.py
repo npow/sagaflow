@@ -14,14 +14,8 @@ from temporalio import activity
 
 from sagaflow.inbox import Inbox, InboxEntry
 from sagaflow.notify import notify_desktop
-from sagaflow.transport.anthropic_sdk import AnthropicSdkTransport, ModelTier
 from sagaflow.transport.boundary import validate_boundary, validate_text_boundary
 from sagaflow.transport.claude_cli import ClaudeCliTransport
-from sagaflow.transport.dispatcher import SubagentRequest, dispatch_subagent
-from sagaflow.transport.structured_output import (
-    MalformedResponseError,
-    parse_structured,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +83,7 @@ async def emit_finding(inp: EmitFindingInput) -> None:
 @dataclass(frozen=True)
 class SpawnSubagentInput:
     role: str
-    tier_name: str                # ModelTier.name — pydantic-safe string
+    tier_name: str
     system_prompt: str
     user_prompt_path: str
     tools_needed: bool
@@ -101,15 +95,7 @@ class SpawnSubagentInput:
     cli_timeout_seconds: float = 3600.0
 
 
-_sdk_singleton: AnthropicSdkTransport | None = None
 _cli_singleton: ClaudeCliTransport | None = None
-
-
-def _get_sdk() -> AnthropicSdkTransport:
-    global _sdk_singleton
-    if _sdk_singleton is None:
-        _sdk_singleton = AnthropicSdkTransport()
-    return _sdk_singleton
 
 
 def _get_cli() -> ClaudeCliTransport:
@@ -181,6 +167,13 @@ def _extract_json_object(raw: str) -> dict | None:
     return None
 
 
+_TIER_TO_CLI_MODEL: dict[str, str] = {
+    "HAIKU": "haiku",
+    "SONNET": "sonnet",
+    "OPUS": "opus",
+}
+
+
 @activity.defn(name="spawn_subagent")
 async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
     prompt_path = Path(inp.user_prompt_path)
@@ -200,6 +193,7 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
             prompt_path,
         )
 
+    # --- budget pre-dispatch ---
     effective_tier_name = inp.tier_name
     _budget_enforcer = None
     if inp.run_dir:
@@ -215,10 +209,6 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
                 raise BudgetExceededError(_bstatus.message)
             effective_tier_name = resolved_tier
 
-    tier = ModelTier[effective_tier_name]
-    _MAX_TOKENS_BY_TIER = {"HAIKU": 8192, "SONNET": 128_000, "OPUS": 128_000}
-    effective_max_tokens = min(inp.max_tokens, _MAX_TOKENS_BY_TIER.get(effective_tier_name, 128_000))
-    sdk = _get_sdk()
     cli = _get_cli()
     run_id = Path(inp.run_dir).name if inp.run_dir else "unknown"
     label = f"{run_id}/{inp.role}:{prompt_path.stem}"
@@ -230,18 +220,9 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
             effective_mcp_config = str(_fallback)
             logger.info("No MCP config specified; using fallback minimal config: %s", _fallback)
 
-    request = SubagentRequest(
-        role=inp.role,
-        tier=tier,
-        system_prompt=inp.system_prompt,
-        user_prompt=user_prompt,
-        max_tokens=effective_max_tokens,
-        tools_needed=inp.tools_needed,
-        label=label,
-        output_schema=inp.output_schema,
-        mcp_config_path=effective_mcp_config,
-        cli_timeout_seconds=inp.cli_timeout_seconds,
-    )
+    # --- CLI dispatch ---
+    combined_prompt = f"{inp.system_prompt}\n\n---\n\n{user_prompt}"
+    model_alias = _TIER_TO_CLI_MODEL.get(effective_tier_name, "opus")
 
     beat_task: asyncio.Task[None] | None = None
     try:
@@ -252,7 +233,14 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
 
     t0 = time.monotonic()
     try:
-        dr = await dispatch_subagent(request, sdk_transport=sdk, cli_transport=cli)
+        cli_result = await cli.call(
+            prompt=combined_prompt,
+            timeout_seconds=inp.cli_timeout_seconds,
+            model=model_alias,
+            label=label,
+            dangerously_skip_permissions=True,
+            mcp_config_path=effective_mcp_config,
+        )
     finally:
         if beat_task is not None:
             beat_task.cancel()
@@ -260,12 +248,18 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
                 await beat_task
     elapsed = round(time.monotonic() - t0, 1)
 
+    raw = cli_result.stdout
+    input_tokens = cli_result.input_tokens
+    output_tokens = cli_result.output_tokens
+    model = model_alias
+
+    # --- budget post-dispatch ---
     if _budget_enforcer:
         from sagaflow.cost import estimate_cost_from_result
         step_cost = estimate_cost_from_result({
-            "_input_tokens": str(dr.input_tokens),
-            "_output_tokens": str(dr.output_tokens),
-            "_model": dr.model,
+            "_input_tokens": str(input_tokens),
+            "_output_tokens": str(output_tokens),
+            "_model": model,
         })
         newly_crossed = _budget_enforcer.record_cost(step_cost)
         if newly_crossed and inp.run_dir:
@@ -282,6 +276,7 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
                     slack_thread_ts=routing.get("thread_ts"),
                 )
 
+    # --- run manifest recording ---
     if inp.run_dir:
         try:
             from sagaflow.run_manifest import StepRecord, append_step as _append_step
@@ -290,10 +285,10 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
                 StepRecord(
                     step=inp.step_index,
                     role=inp.role,
-                    model=dr.model,
+                    model=model,
                     tier=effective_tier_name,
-                    input_tokens=dr.input_tokens,
-                    output_tokens=dr.output_tokens,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
                     duration_seconds=elapsed,
                     status="ok",
                     output_schema_used=inp.output_schema is not None,
@@ -302,11 +297,10 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
         except Exception:
             pass
 
-    raw = dr.text
     _token_meta = {
-        "_input_tokens": str(dr.input_tokens),
-        "_output_tokens": str(dr.output_tokens),
-        "_model": dr.model,
+        "_input_tokens": str(input_tokens),
+        "_output_tokens": str(output_tokens),
+        "_model": model,
     }
 
     def _record_cassette(output: dict[str, str]) -> None:
@@ -328,6 +322,7 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
         except Exception:
             logger.debug("cassette record failed", exc_info=True)
 
+    # --- response parsing ---
     if inp.output_schema is not None:
         import json
         parsed = _extract_json_object(raw)
@@ -352,41 +347,15 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
         _record_cassette(result)
         return result
 
-    try:
-        parsed = parse_structured(raw)
-        parsed, br = validate_boundary(parsed, label=label)
-        if br.truncated_fields:
-            parsed["_boundary_truncated"] = ",".join(br.truncated_fields)
-            logger.error("TRUNCATED fields in %s: %s", label, br.truncated_fields)
-        parsed.update(_token_meta)
-        _record_cassette(parsed)
-        return parsed
-    except MalformedResponseError as exc:
-        truncated_raw = raw[:2000] if isinstance(raw, str) else ""
-        logger.warning(
-            "Malformed subagent response (label=%s, role=%s, error=%s, raw_len=%d): %s",
-            label,
-            inp.role,
-            exc,
-            len(raw) if isinstance(raw, str) else 0,
-            truncated_raw[:500],
-        )
-        raw_path = ""
-        try:
-            dump = prompt_path.with_suffix(".malformed_response")
-            dump.write_text(raw if isinstance(raw, str) else "", encoding="utf-8")
-            raw_path = str(dump)
-        except OSError:
-            pass
-        result = {
-            MALFORMED_SENTINEL: "1",
-            "_error": str(exc),
-            "_raw": truncated_raw,
-            "_raw_path": raw_path,
-            **_token_meta,
-        }
-        _record_cassette(result)
-        return result
+    # No output_schema: return raw text wrapped in {"RESPONSE": ...}
+    result = {"RESPONSE": raw or ""}
+    result, br = validate_boundary(result, label=label)
+    if br.truncated_fields:
+        result["_boundary_truncated"] = ",".join(br.truncated_fields)
+        logger.error("TRUNCATED fields in %s: %s", label, br.truncated_fields)
+    result.update(_token_meta)
+    _record_cassette(result)
+    return result
 
 
 @dataclass(frozen=True)
@@ -451,3 +420,123 @@ async def run_shell_activity(inp: RunShellInput) -> RunShellResult:
     except asyncio.TimeoutError:
         proc.kill()
         return RunShellResult(stdout="", stderr="timeout", exit_code=124, timed_out=True)
+
+
+@dataclass(frozen=True)
+class SdkTelemetryInput:
+    role: str
+    tier: str
+    system_prompt: str
+    user_prompt: str
+    run_dir: str
+    step_index: int
+    model: str
+    input_tokens: int
+    output_tokens: int
+    duration_seconds: float
+    workflow_id: str = ""
+
+
+@activity.defn(name="record_sdk_telemetry")
+async def record_sdk_telemetry(inp: SdkTelemetryInput) -> str:
+    """Record budget, manifest, and cassette for an SDK (Pydantic AI) call."""
+    _token_meta = {
+        "_input_tokens": str(inp.input_tokens),
+        "_output_tokens": str(inp.output_tokens),
+        "_model": inp.model,
+    }
+
+    if inp.run_dir and inp.workflow_id:
+        try:
+            from sagaflow.budget.registry import get_enforcer as _get_enforcer
+            enforcer = _get_enforcer(inp.workflow_id)
+            if enforcer:
+                from sagaflow.cost import estimate_cost_from_result
+                step_cost = estimate_cost_from_result(_token_meta)
+                newly_crossed = enforcer.record_cost(step_cost)
+                if newly_crossed:
+                    from sagaflow.budget.alerts import fire_threshold_alert
+                    from sagaflow.slack_progress import _read_progress_file
+                    routing = _read_progress_file(inp.run_dir) or {}
+                    for threshold in newly_crossed:
+                        fire_threshold_alert(
+                            threshold=threshold,
+                            accumulated_cost_usd=enforcer.ledger.accumulated_cost_usd,
+                            max_cost_usd=enforcer.ledger.policy.max_cost_usd or 0.0,
+                            run_id=Path(inp.run_dir).name,
+                            slack_channel=routing.get("channel"),
+                            slack_thread_ts=routing.get("thread_ts"),
+                        )
+        except Exception:
+            logger.debug("budget recording failed for SDK call", exc_info=True)
+
+    if inp.run_dir:
+        try:
+            from sagaflow.run_manifest import StepRecord, append_step as _append_step
+            _append_step(
+                Path(inp.run_dir),
+                StepRecord(
+                    step=inp.step_index,
+                    role=inp.role,
+                    model=inp.model,
+                    tier=inp.tier,
+                    input_tokens=inp.input_tokens,
+                    output_tokens=inp.output_tokens,
+                    duration_seconds=inp.duration_seconds,
+                    status="ok",
+                    output_schema_used=False,
+                ),
+            )
+        except Exception:
+            logger.debug("manifest recording failed for SDK call", exc_info=True)
+
+    if inp.run_dir:
+        try:
+            from sagaflow.replay.cassette import hash_input, record_entry
+            record_entry(
+                run_dir=Path(inp.run_dir),
+                run_id=Path(inp.run_dir).name,
+                skill=inp.workflow_id.split("/")[0] if inp.workflow_id else "",
+                activity_name="sdk_agent",
+                role=inp.role,
+                tier=inp.tier,
+                input_hash=hash_input(inp.role, inp.system_prompt, inp.user_prompt),
+                output=_token_meta,
+                duration_seconds=inp.duration_seconds,
+            )
+        except Exception:
+            logger.debug("cassette record failed for SDK call", exc_info=True)
+
+    return inp.tier
+
+
+@dataclass(frozen=True)
+class BudgetCheckInput:
+    workflow_id: str
+    role: str
+    tier: str
+
+
+@dataclass(frozen=True)
+class BudgetCheckResult:
+    effective_tier: str
+    abort: bool
+    message: str = ""
+
+
+@activity.defn(name="budget_pre_dispatch")
+async def budget_pre_dispatch(inp: BudgetCheckInput) -> BudgetCheckResult:
+    """Check budget before an SDK dispatch. Returns effective tier (may downgrade)."""
+    try:
+        from sagaflow.budget.registry import get_enforcer as _get_enforcer
+        enforcer = _get_enforcer(inp.workflow_id)
+        if enforcer:
+            resolved_tier, status = enforcer.pre_dispatch(inp.role, inp.tier)
+            if status.decision.value == "abort":
+                return BudgetCheckResult(
+                    effective_tier=inp.tier, abort=True, message=status.message,
+                )
+            return BudgetCheckResult(effective_tier=resolved_tier, abort=False)
+    except Exception:
+        logger.debug("budget pre-dispatch check failed", exc_info=True)
+    return BudgetCheckResult(effective_tier=inp.tier, abort=False)

@@ -55,22 +55,18 @@ async def test_emit_finding_skips_notification_when_disabled(tmp_path) -> None:
     notif.assert_not_called()
 
 
-async def test_spawn_subagent_returns_parsed_structured_output(tmp_path) -> None:
+async def test_spawn_subagent_returns_response_via_cli(tmp_path) -> None:
     input_path = tmp_path / "in.txt"
     input_path.write_text("user prompt here")
-    sdk_call = AsyncMock(
+    cli_call = AsyncMock(
         return_value=MagicMock(
-            text="prose\nSTRUCTURED_OUTPUT_START\nVERDICT|OK\nSTRUCTURED_OUTPUT_END\n",
+            stdout="The answer is 42.",
             input_tokens=10,
             output_tokens=5,
         )
     )
-    fake_sdk = MagicMock(call=sdk_call)
-    fake_cli = MagicMock(call=AsyncMock())
-    with (
-        patch("sagaflow.durable.activities._get_sdk", return_value=fake_sdk),
-        patch("sagaflow.durable.activities._get_cli", return_value=fake_cli),
-    ):
+    fake_cli = MagicMock(call=cli_call)
+    with patch("sagaflow.durable.activities._get_cli", return_value=fake_cli):
         parsed = await spawn_subagent(
             SpawnSubagentInput(
                 role="greeter",
@@ -81,10 +77,10 @@ async def test_spawn_subagent_returns_parsed_structured_output(tmp_path) -> None
                 tools_needed=False,
             )
         )
-    assert parsed["VERDICT"] == "OK"
+    assert parsed["RESPONSE"] == "The answer is 42."
     assert parsed["_input_tokens"] == "10"
     assert parsed["_output_tokens"] == "5"
-    sdk_call.assert_awaited()
+    cli_call.assert_awaited()
 
 
 async def test_spawn_subagent_raises_on_missing_input_file(tmp_path) -> None:
@@ -101,27 +97,20 @@ async def test_spawn_subagent_raises_on_missing_input_file(tmp_path) -> None:
         )
 
 
-async def test_spawn_subagent_returns_sentinel_on_malformed_output(tmp_path) -> None:
-    # Regression: a Haiku response missing STRUCTURED_OUTPUT_START/END markers
-    # previously raised MalformedResponseError and killed the whole workflow. The
-    # activity now returns a sentinel so the workflow can degrade gracefully.
+async def test_spawn_subagent_with_output_schema_returns_parsed_json(tmp_path) -> None:
     from sagaflow.durable.activities import MALFORMED_SENTINEL
 
     input_path = tmp_path / "in.txt"
     input_path.write_text("user prompt here")
-    sdk_call = AsyncMock(
+    cli_call = AsyncMock(
         return_value=MagicMock(
-            text="prose with no structured block at all",
+            stdout='{"VERDICT": "OK", "REASON": "looks good"}',
             input_tokens=10,
             output_tokens=5,
         )
     )
-    fake_sdk = MagicMock(call=sdk_call)
-    fake_cli = MagicMock(call=AsyncMock())
-    with (
-        patch("sagaflow.durable.activities._get_sdk", return_value=fake_sdk),
-        patch("sagaflow.durable.activities._get_cli", return_value=fake_cli),
-    ):
+    fake_cli = MagicMock(call=cli_call)
+    with patch("sagaflow.durable.activities._get_cli", return_value=fake_cli):
         parsed = await spawn_subagent(
             SpawnSubagentInput(
                 role="critic",
@@ -130,32 +119,60 @@ async def test_spawn_subagent_returns_sentinel_on_malformed_output(tmp_path) -> 
                 user_prompt_path=str(input_path),
                 max_tokens=128,
                 tools_needed=False,
+                output_schema={"type": "object"},
+            )
+        )
+    assert parsed["VERDICT"] == "OK"
+    assert parsed["REASON"] == "looks good"
+    assert parsed.get(MALFORMED_SENTINEL) is None
+
+
+async def test_spawn_subagent_returns_sentinel_on_malformed_json(tmp_path) -> None:
+    # When output_schema is set but response is not valid JSON, return sentinel.
+    from sagaflow.durable.activities import MALFORMED_SENTINEL
+
+    input_path = tmp_path / "in.txt"
+    input_path.write_text("user prompt here")
+    cli_call = AsyncMock(
+        return_value=MagicMock(
+            stdout="prose with no JSON at all",
+            input_tokens=10,
+            output_tokens=5,
+        )
+    )
+    fake_cli = MagicMock(call=cli_call)
+    with patch("sagaflow.durable.activities._get_cli", return_value=fake_cli):
+        parsed = await spawn_subagent(
+            SpawnSubagentInput(
+                role="critic",
+                tier_name="HAIKU",
+                system_prompt="be brief",
+                user_prompt_path=str(input_path),
+                max_tokens=128,
+                tools_needed=False,
+                output_schema={"type": "object"},
             )
         )
     assert parsed.get(MALFORMED_SENTINEL) == "1"
     assert "_error" in parsed
     assert "_raw" in parsed
-    # .get() of expected keys returns None — workflows with defaults degrade gracefully.
-    assert parsed.get("VERDICT") is None
 
 
 async def test_spawn_subagent_cancels_heartbeat_on_completion(tmp_path) -> None:
     # Regression: background heartbeat loop must be cancelled on activity exit so we
     # don't leak tasks. Verify by patching activity.heartbeat and asserting it is
-    # called at most a handful of times for a fast-returning LLM call.
+    # called at most a handful of times for a fast-returning CLI call.
     input_path = tmp_path / "in.txt"
     input_path.write_text("user prompt here")
-    sdk_call = AsyncMock(
+    cli_call = AsyncMock(
         return_value=MagicMock(
-            text="STRUCTURED_OUTPUT_START\nK|V\nSTRUCTURED_OUTPUT_END",
+            stdout="hello world",
             input_tokens=1,
             output_tokens=1,
         )
     )
-    fake_sdk = MagicMock(call=sdk_call)
-    fake_cli = MagicMock(call=AsyncMock())
+    fake_cli = MagicMock(call=cli_call)
     with (
-        patch("sagaflow.durable.activities._get_sdk", return_value=fake_sdk),
         patch("sagaflow.durable.activities._get_cli", return_value=fake_cli),
         patch("sagaflow.durable.activities.activity.heartbeat") as beat,
     ):
@@ -169,7 +186,7 @@ async def test_spawn_subagent_cancels_heartbeat_on_completion(tmp_path) -> None:
                 tools_needed=False,
             )
         )
-    assert parsed["K"] == "V"
+    assert parsed["RESPONSE"] == "hello world"
     assert "_input_tokens" in parsed
     # Fast call → heartbeat should fire zero or one time before cancellation.
     assert beat.call_count <= 2

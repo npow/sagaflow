@@ -382,15 +382,27 @@ def _probe_temporal() -> tuple[str, str | None]:
 
 
 def _probe_transport() -> tuple[str, str | None]:
+    """Probe the Anthropic API with a minimal Haiku call.
+
+    Uses the anthropic SDK directly because the pydantic-ai engine
+    (engine.py get_sdk_agent / TemporalAgent) requires Temporal workflow
+    context to execute. This probe runs outside any workflow, so a direct
+    API call is the correct way to verify API reachability.
+    """
     import asyncio as _a
-    from sagaflow.transport.anthropic_sdk import AnthropicSdkTransport, ModelTier
+    import os
+    from anthropic import AsyncAnthropic
     try:
         async def _call() -> None:
-            await AnthropicSdkTransport().call(
-                tier=ModelTier.HAIKU,
-                system_prompt="ping",
-                user_prompt="ping",
+            client = AsyncAnthropic(
+                base_url=os.environ.get("ANTHROPIC_BASE_URL"),
+                api_key=os.environ.get("ANTHROPIC_API_KEY", "sk-dummy"),
+            )
+            await client.messages.create(
+                model="claude-haiku-4-5-20251001",
                 max_tokens=8,
+                system="ping",
+                messages=[{"role": "user", "content": "ping"}],
             )
         _a.run(_call())
         return ("OK", None)
