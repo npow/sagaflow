@@ -601,63 +601,257 @@ git commit -m "refactor: simplify spawn_subagent to CLI-only path"
 
 ---
 
-### Task 5: Rewire helpers.py to route SDK calls through engine
+### Task 5: Add record_sdk_telemetry activity
 
 **Files:**
-- Modify: `sagaflow/durable/helpers.py:1-30` (imports), `sagaflow/durable/helpers.py:53-94` (spawn), `sagaflow/durable/helpers.py:165-205` (spawn_with_prompt)
+- Modify: `sagaflow/durable/activities.py` (add new activity + dataclass)
+- Create: `tests/test_sdk_telemetry.py`
+
+The SDK path through Pydantic AI bypasses the old `spawn_subagent` activity, so budget
+enforcement, run manifest recording, and replay cassette recording are lost. This task
+adds a lightweight `record_sdk_telemetry` activity that handles all three, called by
+`spawn_with_prompt()` after `agent.run()` returns.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `~/code/sagaflow/tests/test_sdk_telemetry.py`:
+
+```python
+"""Tests for the record_sdk_telemetry activity."""
+
+from __future__ import annotations
+
+import pytest
+from dataclasses import asdict
+
+
+def test_sdk_telemetry_input_dataclass():
+    from sagaflow.durable.activities import SdkTelemetryInput
+
+    inp = SdkTelemetryInput(
+        role="critic",
+        tier="HAIKU",
+        system_prompt="you are a critic",
+        user_prompt="review this",
+        run_dir="/tmp/test-run",
+        step_index=0,
+        model="anthropic:claude-haiku-4-5-20251001",
+        input_tokens=100,
+        output_tokens=50,
+        duration_seconds=1.5,
+    )
+    assert inp.role == "critic"
+    assert inp.input_tokens == 100
+    d = asdict(inp)
+    assert d["tier"] == "HAIKU"
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+```bash
+cd ~/code/sagaflow
+.venv/bin/pytest tests/test_sdk_telemetry.py -v
+```
+
+Expected: `ImportError: cannot import name 'SdkTelemetryInput'`
+
+- [ ] **Step 3: Add SdkTelemetryInput dataclass and record_sdk_telemetry activity**
+
+Add to `sagaflow/durable/activities.py`, after the `RunShellResult` class:
+
+```python
+@dataclass(frozen=True)
+class SdkTelemetryInput:
+    role: str
+    tier: str
+    system_prompt: str
+    user_prompt: str
+    run_dir: str
+    step_index: int
+    model: str
+    input_tokens: int
+    output_tokens: int
+    duration_seconds: float
+    workflow_id: str = ""
+
+
+@activity.defn(name="record_sdk_telemetry")
+async def record_sdk_telemetry(inp: SdkTelemetryInput) -> str:
+    """Record budget, manifest, and cassette for an SDK (Pydantic AI) call.
+
+    Lightweight activity — no LLM, just state reads/writes. Called by
+    spawn_with_prompt() after agent.run() returns.
+    Returns the effective tier (may be downgraded by budget enforcement).
+    """
+    _token_meta = {
+        "_input_tokens": str(inp.input_tokens),
+        "_output_tokens": str(inp.output_tokens),
+        "_model": inp.model,
+    }
+
+    # Budget: record cost
+    if inp.run_dir and inp.workflow_id:
+        try:
+            from sagaflow.budget.registry import get_enforcer as _get_enforcer
+            enforcer = _get_enforcer(inp.workflow_id)
+            if enforcer:
+                from sagaflow.cost import estimate_cost_from_result
+                step_cost = estimate_cost_from_result(_token_meta)
+                newly_crossed = enforcer.record_cost(step_cost)
+                if newly_crossed:
+                    from sagaflow.budget.alerts import fire_threshold_alert
+                    from sagaflow.slack_progress import _read_progress_file
+                    routing = _read_progress_file(inp.run_dir) or {}
+                    for threshold in newly_crossed:
+                        fire_threshold_alert(
+                            threshold=threshold,
+                            accumulated_cost_usd=enforcer.ledger.accumulated_cost_usd,
+                            max_cost_usd=enforcer.ledger.policy.max_cost_usd or 0.0,
+                            run_id=Path(inp.run_dir).name,
+                            slack_channel=routing.get("channel"),
+                            slack_thread_ts=routing.get("thread_ts"),
+                        )
+        except Exception:
+            logger.debug("budget recording failed for SDK call", exc_info=True)
+
+    # Run manifest: append step
+    if inp.run_dir:
+        try:
+            from sagaflow.run_manifest import StepRecord, append_step as _append_step
+            _append_step(
+                Path(inp.run_dir),
+                StepRecord(
+                    step=inp.step_index,
+                    role=inp.role,
+                    model=inp.model,
+                    tier=inp.tier,
+                    input_tokens=inp.input_tokens,
+                    output_tokens=inp.output_tokens,
+                    duration_seconds=inp.duration_seconds,
+                    status="ok",
+                    output_schema_used=False,
+                ),
+            )
+        except Exception:
+            logger.debug("manifest recording failed for SDK call", exc_info=True)
+
+    # Replay cassette
+    if inp.run_dir:
+        try:
+            from sagaflow.replay.cassette import hash_input, record_entry
+            record_entry(
+                run_dir=Path(inp.run_dir),
+                run_id=Path(inp.run_dir).name,
+                skill=inp.workflow_id.split("/")[0] if inp.workflow_id else "",
+                activity_name="sdk_agent",
+                role=inp.role,
+                tier=inp.tier,
+                input_hash=hash_input(inp.role, inp.system_prompt, inp.user_prompt),
+                output=_token_meta,
+                duration_seconds=inp.duration_seconds,
+            )
+        except Exception:
+            logger.debug("cassette record failed for SDK call", exc_info=True)
+
+    return inp.tier
+
+
+@dataclass(frozen=True)
+class BudgetCheckInput:
+    workflow_id: str
+    role: str
+    tier: str
+
+
+@dataclass(frozen=True)
+class BudgetCheckResult:
+    effective_tier: str
+    abort: bool
+    message: str = ""
+
+
+@activity.defn(name="budget_pre_dispatch")
+async def budget_pre_dispatch(inp: BudgetCheckInput) -> BudgetCheckResult:
+    """Check budget before an SDK dispatch. Returns effective tier (may downgrade)."""
+    try:
+        from sagaflow.budget.registry import get_enforcer as _get_enforcer
+        enforcer = _get_enforcer(inp.workflow_id)
+        if enforcer:
+            resolved_tier, status = enforcer.pre_dispatch(inp.role, inp.tier)
+            if status.decision.value == "abort":
+                return BudgetCheckResult(
+                    effective_tier=inp.tier, abort=True, message=status.message,
+                )
+            return BudgetCheckResult(effective_tier=resolved_tier, abort=False)
+    except Exception:
+        logger.debug("budget pre-dispatch check failed", exc_info=True)
+    return BudgetCheckResult(effective_tier=inp.tier, abort=False)
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+```bash
+cd ~/code/sagaflow
+.venv/bin/pytest tests/test_sdk_telemetry.py -v
+```
+
+Expected: 1 passed
+
+- [ ] **Step 5: Commit**
+
+```bash
+cd ~/code/sagaflow
+git add sagaflow/durable/activities.py tests/test_sdk_telemetry.py
+git commit -m "feat: add record_sdk_telemetry + budget_pre_dispatch activities"
+```
+
+---
+
+### Task 6: Rewire helpers.py to route SDK calls through engine with telemetry
+
+**Files:**
+- Modify: `sagaflow/durable/helpers.py:1-30` (imports), `sagaflow/durable/helpers.py:165-205` (spawn_with_prompt)
 
 - [ ] **Step 1: Write test for SDK routing**
 
 Add to `tests/test_engine.py`:
 
 ```python
-def test_spawn_with_prompt_uses_engine_for_sdk(monkeypatch):
-    """Verify spawn_with_prompt routes non-tool calls through the engine."""
-    from sagaflow import engine
-
-    calls = []
-
-    async def mock_run_sdk(**kwargs):
-        calls.append(kwargs)
-        return {"RESPONSE": "mocked"}
-
-    monkeypatch.setattr(engine, "run_sdk", mock_run_sdk)
-
-    # Can't call spawn_with_prompt directly (needs Temporal context),
-    # but we verify the import path is correct
+def test_spawn_with_prompt_uses_engine_for_sdk():
+    """Verify spawn_with_prompt imports engine for SDK path."""
     from sagaflow.durable import helpers
     assert hasattr(helpers, "spawn_with_prompt")
+
+
+def test_helpers_imports_telemetry_inputs():
+    """Verify helpers can import the telemetry dataclasses."""
+    from sagaflow.durable.activities import (
+        SdkTelemetryInput,
+        BudgetCheckInput,
+        BudgetCheckResult,
+    )
+    assert SdkTelemetryInput is not None
+    assert BudgetCheckInput is not None
+    assert BudgetCheckResult is not None
 ```
 
 - [ ] **Step 2: Update helpers.py imports**
 
-Replace the top of `sagaflow/durable/helpers.py`:
+Add the new dataclass imports to the existing import block in `sagaflow/durable/helpers.py`:
 
 ```python
-from __future__ import annotations
-
-import asyncio
-import logging
-from dataclasses import dataclass
-from datetime import timedelta
-from typing import Any
-
-from temporalio import workflow
-from temporalio.common import RetryPolicy
-
 from sagaflow.durable.activities import (
+    BudgetCheckInput,
+    BudgetCheckResult,
     EmitFindingInput,
     FinalizeManifestInput,
+    SdkTelemetryInput,
     SpawnSubagentInput,
     WriteArtifactInput,
 )
-from sagaflow.durable.retry_policies import HAIKU_POLICY, SONNET_POLICY
-from sagaflow.slack_progress import DeliverArtifactInput, ReportSlackProgressInput
 ```
 
-No import changes needed — `SpawnSubagentInput` is still used for the CLI path. The engine is imported lazily inside functions to avoid circular imports.
-
-- [ ] **Step 3: Update spawn_with_prompt to route through engine for SDK path**
+- [ ] **Step 3: Update spawn_with_prompt to route through engine with full telemetry**
 
 Replace `spawn_with_prompt()` (lines 165-205):
 
@@ -682,25 +876,20 @@ async def spawn_with_prompt(
 ) -> dict[str, str]:
     """Write a prompt file then dispatch an LLM call.
 
-    SDK path (tools_needed=False): routes through sagaflow.engine (Pydantic AI).
+    SDK path (tools_needed=False): routes through sagaflow.engine (Pydantic AI)
+    with budget enforcement, cost tracking, manifest recording, and cassette.
     CLI path (tools_needed=True): writes prompt file then spawns via activity.
     """
     if not tools_needed:
-        # SDK path — Pydantic AI TemporalAgent handles this as an activity
-        with workflow.unsafe.imports_passed_through():
-            from sagaflow.engine import get_sdk_agent
-        agent = get_sdk_agent(
-            name=role,
+        return await _dispatch_sdk(
+            role=role,
             tier=tier,
             system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            run_dir=run_dir,
+            step_index=step_index,
             timeout=timeout,
         )
-        result = await agent.run(user_prompt)
-        if isinstance(result.output, str):
-            return {"RESPONSE": result.output}
-        if hasattr(result.output, "model_dump"):
-            return {k: str(v) for k, v in result.output.model_dump().items()}
-        return {"RESPONSE": str(result.output)}
 
     # CLI path — unchanged: write prompt file, spawn via activity
     prompt_path = f"{run_dir}/{role}{suffix}-prompt.txt"
@@ -721,6 +910,96 @@ async def spawn_with_prompt(
         heartbeat=heartbeat,
         retry=retry,
     )
+
+
+async def _dispatch_sdk(
+    *,
+    role: str,
+    tier: str,
+    system_prompt: str,
+    user_prompt: str,
+    run_dir: str,
+    step_index: int = 0,
+    timeout: timedelta = _DEFAULT_SPAWN_TIMEOUT,
+) -> dict[str, str]:
+    """SDK dispatch via Pydantic AI with budget enforcement and telemetry."""
+    effective_tier = tier
+    workflow_id = ""
+    try:
+        workflow_id = workflow.info().workflow_id
+    except Exception:
+        pass
+
+    # Budget pre-dispatch: check budget, possibly downgrade tier
+    if workflow_id:
+        budget_result: BudgetCheckResult = await workflow.execute_activity(
+            "budget_pre_dispatch",
+            BudgetCheckInput(
+                workflow_id=workflow_id,
+                role=role,
+                tier=tier,
+            ),
+            start_to_close_timeout=timedelta(seconds=10),
+            retry_policy=HAIKU_POLICY,
+        )
+        if budget_result.abort:
+            from sagaflow.budget.enforcer import BudgetExceededError
+            raise BudgetExceededError(budget_result.message)
+        effective_tier = budget_result.effective_tier
+
+    # Dispatch via Pydantic AI TemporalAgent
+    with workflow.unsafe.imports_passed_through():
+        from sagaflow.engine import get_sdk_agent, TIER_TO_MODEL
+
+    agent = get_sdk_agent(
+        name=role,
+        tier=effective_tier,
+        system_prompt=system_prompt,
+        timeout=timeout,
+    )
+    t0 = workflow.now()
+    result = await agent.run(user_prompt)
+    elapsed = (workflow.now() - t0).total_seconds()
+
+    # Extract usage from Pydantic AI result
+    usage = result.usage()
+    input_tokens = usage.request_tokens or 0
+    output_tokens = usage.response_tokens or 0
+    model = TIER_TO_MODEL.get(effective_tier, f"anthropic:{effective_tier}")
+
+    # Record telemetry (budget cost, manifest, cassette)
+    await workflow.execute_activity(
+        "record_sdk_telemetry",
+        SdkTelemetryInput(
+            role=role,
+            tier=effective_tier,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            run_dir=run_dir,
+            step_index=step_index,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            duration_seconds=elapsed,
+            workflow_id=workflow_id,
+        ),
+        start_to_close_timeout=timedelta(seconds=15),
+        retry_policy=HAIKU_POLICY,
+    )
+
+    # Build return dict with token metadata
+    _token_meta = {
+        "_input_tokens": str(input_tokens),
+        "_output_tokens": str(output_tokens),
+        "_model": model,
+    }
+    if isinstance(result.output, str):
+        return {"RESPONSE": result.output, **_token_meta}
+    if hasattr(result.output, "model_dump"):
+        d = {k: str(v) for k, v in result.output.model_dump().items()}
+        d.update(_token_meta)
+        return d
+    return {"RESPONSE": str(result.output), **_token_meta}
 ```
 
 - [ ] **Step 4: Run tests**
@@ -737,12 +1016,12 @@ Expected: all pass
 ```bash
 cd ~/code/sagaflow
 git add sagaflow/durable/helpers.py
-git commit -m "feat: route SDK calls through Pydantic AI engine in helpers"
+git commit -m "feat: route SDK calls through Pydantic AI engine with full telemetry"
 ```
 
 ---
 
-### Task 6: Update worker.py for PydanticAIPlugin
+### Task 7: Update worker.py for PydanticAIPlugin
 
 **Files:**
 - Modify: `sagaflow/worker.py:1-27` (imports, passthrough), `sagaflow/worker.py:582-655` (run_worker)
@@ -792,7 +1071,21 @@ In `run_worker()`, after the worker construction (around line 637), add the plug
     )
 ```
 
-- [ ] **Step 3: Remove ManifestWorkflow references from worker.py**
+- [ ] **Step 3: Register new telemetry activities in worker**
+
+In `run_worker()`, where `combined` activities are assembled (around line 607), add the new activities:
+
+```python
+from sagaflow.durable.activities import (
+    record_sdk_telemetry as _record_sdk_act,
+    budget_pre_dispatch as _budget_pre_act,
+)
+combined.extend([_record_sdk_act, _budget_pre_act])
+```
+
+Add this alongside the existing `combined.extend(...)` calls for slack, finalize, run_shell, etc.
+
+- [ ] **Step 4: Remove ManifestWorkflow references from worker.py**
 
 In `_register_manifested_skills()` (line 297-358) and `build_extra_workflows()` (line 415-419): remove the ManifestWorkflow imports and registration since the manifest directory is deleted. Replace with pass/skip.
 
@@ -815,7 +1108,7 @@ def _register_manifested_skills(registry: SkillRegistry, skills_root: "Path") ->
     pass
 ```
 
-- [ ] **Step 4: Run worker import check**
+- [ ] **Step 5: Run worker import check**
 
 ```bash
 cd ~/code/sagaflow
@@ -824,7 +1117,7 @@ cd ~/code/sagaflow
 
 Expected: `OK`
 
-- [ ] **Step 5: Run full test suite**
+- [ ] **Step 6: Run full test suite**
 
 ```bash
 cd ~/code/sagaflow
@@ -833,17 +1126,17 @@ cd ~/code/sagaflow
 
 Fix any remaining import errors. Expected: most tests pass. Some skill-specific tests may need adjustments if they import deleted modules.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 cd ~/code/sagaflow
 git add sagaflow/worker.py
-git commit -m "feat: add PydanticAIPlugin to worker, remove ManifestWorkflow"
+git commit -m "feat: add PydanticAIPlugin + telemetry activities to worker, remove ManifestWorkflow"
 ```
 
 ---
 
-### Task 7: Update api.py generate_text() to use engine
+### Task 8: Update api.py generate_text() to use engine
 
 **Files:**
 - Modify: `sagaflow/api.py:192-251` (generate_text)
@@ -883,7 +1176,7 @@ git diff --stat
 
 ---
 
-### Task 8: Bump version and final verification
+### Task 9: Bump version and final verification
 
 **Files:**
 - Modify: `sagaflow/pyproject.toml:7` (version)
@@ -913,7 +1206,7 @@ cd ~/code/sagaflow
 from sagaflow import workflow, generate_text, parallel, write_file, progress
 from sagaflow.engine import get_sdk_agent, TIER_TO_MODEL, all_cached_agents
 from sagaflow.durable.helpers import spawn_with_prompt, spawn_parallel, finalize
-from sagaflow.durable.activities import spawn_subagent, write_artifact, emit_finding
+from sagaflow.durable.activities import spawn_subagent, write_artifact, emit_finding, record_sdk_telemetry, budget_pre_dispatch
 from sagaflow.worker import run_worker, build_registry
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, TemporalAgent
 print('All imports OK')
@@ -956,4 +1249,4 @@ cd ~/code/sagaflow
 git log --oneline -8
 ```
 
-Expected: 6 commits from this plan (Tasks 1-6, 8) on top of the spec commit.
+Expected: 8 commits from this plan (Tasks 1-9) on top of the spec commit.
