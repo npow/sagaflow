@@ -20,8 +20,11 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 from sagaflow.durable.activities import (
+    BudgetCheckInput,
+    BudgetCheckResult,
     EmitFindingInput,
     FinalizeManifestInput,
+    SdkTelemetryInput,
     SpawnSubagentInput,
     WriteArtifactInput,
 )
@@ -180,11 +183,23 @@ async def spawn_with_prompt(
     heartbeat: timedelta | None = None,
     retry: RetryPolicy | None = None,
 ) -> dict[str, str]:
-    """Write a prompt file then spawn a subagent — the most common two-step pattern.
+    """Write a prompt file then dispatch an LLM call.
 
-    Eliminates the separate ``write()`` + ``spawn()`` calls that every
-    orchestration skill does before each agent dispatch.
+    SDK path (tools_needed=False): routes through sagaflow.engine (Pydantic AI)
+    with budget enforcement, cost tracking, manifest recording, and cassette.
+    CLI path (tools_needed=True): writes prompt file then spawns via activity.
     """
+    if not tools_needed:
+        return await _dispatch_sdk(
+            role=role,
+            tier=tier,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            run_dir=run_dir,
+            step_index=step_index,
+            timeout=timeout,
+        )
+
     prompt_path = f"{run_dir}/{role}{suffix}-prompt.txt"
     await write(prompt_path, user_prompt)
     return await spawn(
@@ -203,6 +218,91 @@ async def spawn_with_prompt(
         heartbeat=heartbeat,
         retry=retry,
     )
+
+
+async def _dispatch_sdk(
+    *,
+    role: str,
+    tier: str,
+    system_prompt: str,
+    user_prompt: str,
+    run_dir: str,
+    step_index: int = 0,
+    timeout: timedelta = _DEFAULT_SPAWN_TIMEOUT,
+) -> dict[str, str]:
+    """SDK dispatch via Pydantic AI with budget enforcement and telemetry."""
+    effective_tier = tier
+    workflow_id = ""
+    try:
+        workflow_id = workflow.info().workflow_id
+    except Exception:
+        pass
+
+    if workflow_id:
+        budget_result: BudgetCheckResult = await workflow.execute_activity(
+            "budget_pre_dispatch",
+            BudgetCheckInput(
+                workflow_id=workflow_id,
+                role=role,
+                tier=tier,
+            ),
+            start_to_close_timeout=timedelta(seconds=10),
+            retry_policy=HAIKU_POLICY,
+        )
+        if budget_result.abort:
+            from sagaflow.budget.enforcer import BudgetExceededError
+            raise BudgetExceededError(budget_result.message)
+        effective_tier = budget_result.effective_tier
+
+    with workflow.unsafe.imports_passed_through():
+        from sagaflow.engine import get_sdk_agent, TIER_TO_MODEL
+
+    agent = get_sdk_agent(
+        name=role,
+        tier=effective_tier,
+        system_prompt=system_prompt,
+        timeout=timeout,
+    )
+    t0 = workflow.now()
+    result = await agent.run(user_prompt)
+    elapsed = (workflow.now() - t0).total_seconds()
+
+    usage = result.usage()
+    input_tokens = usage.request_tokens or 0
+    output_tokens = usage.response_tokens or 0
+    model = TIER_TO_MODEL.get(effective_tier, f"anthropic:{effective_tier}")
+
+    await workflow.execute_activity(
+        "record_sdk_telemetry",
+        SdkTelemetryInput(
+            role=role,
+            tier=effective_tier,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            run_dir=run_dir,
+            step_index=step_index,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            duration_seconds=elapsed,
+            workflow_id=workflow_id,
+        ),
+        start_to_close_timeout=timedelta(seconds=15),
+        retry_policy=HAIKU_POLICY,
+    )
+
+    _token_meta = {
+        "_input_tokens": str(input_tokens),
+        "_output_tokens": str(output_tokens),
+        "_model": model,
+    }
+    if isinstance(result.output, str):
+        return {"RESPONSE": result.output, **_token_meta}
+    if hasattr(result.output, "model_dump"):
+        d = {k: str(v) for k, v in result.output.model_dump().items()}
+        d.update(_token_meta)
+        return d
+    return {"RESPONSE": str(result.output), **_token_meta}
 
 
 @dataclass(frozen=True)
