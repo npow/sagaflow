@@ -24,7 +24,7 @@ from sagaflow.temporal_client import DEFAULT_NAMESPACE, DEFAULT_TARGET, TASK_QUE
 
 _log = logging.getLogger(__name__)
 
-_PASSTHROUGH_MODULES = ("httpx", "anthropic", "sagaflow", "pydantic", "skills", "claude_skill_", "sniffio")
+_PASSTHROUGH_MODULES = ("httpx", "anthropic", "sagaflow", "pydantic", "pydantic_ai", "skills", "claude_skill_", "sniffio")
 
 _ACTIVITY_MEM_BUDGET_MB = 600
 
@@ -279,6 +279,11 @@ def build_registry() -> SkillRegistry:
     # These use the shared ManifestWorkflow instead of per-skill workflow.py.
     _register_manifested_skills(registry, skills_root)
 
+    # @workflow-decorated functions: scan workflow.py files for sagaflow.api.workflow
+    # decorated functions and register them. Only picks up skills not already registered
+    # via __init__.py or manifest.
+    _register_api_workflow_skills(registry, skills_root)
+
     if failed_skills:
         _log.error(
             "skill loading failures (%d): %s",
@@ -290,67 +295,52 @@ def build_registry() -> SkillRegistry:
 
 
 def _register_manifested_skills(registry: SkillRegistry, skills_root: "Path") -> None:
-    """Register skills that have execution: frontmatter in SKILL.md.
+    """Manifest-based skill registration — disabled pending Pydantic AI migration."""
+    pass
 
-    These use ManifestWorkflow (a single shared Temporal workflow class)
-    instead of per-skill workflow.py files. Skills already registered
-    via __init__.py are skipped — manifest takes effect only when the
-    legacy workflow.py is removed.
+
+def _register_api_workflow_skills(registry: SkillRegistry, skills_root: "Path") -> None:
+    """Auto-discover @workflow-decorated functions in workflow.py files.
+
+    Scans skill dirs that have ``workflow.py`` but were NOT already registered
+    via ``__init__.py`` or manifest. Loads the module, finds any functions
+    decorated with ``@sagaflow.workflow``, and registers them.
     """
     if not skills_root.is_dir():
-        return
-
-    try:
-        from sagaflow.manifest.temporal import (
-            ManifestWorkflow,
-            load_manifest,
-            llm_call_activity,
-            resolve_skill_root_activity,
-            ManifestInput,
-        )
-    except ImportError:
-        _log.debug("manifest module not available, skipping manifest discovery")
         return
 
     for skill_dir in sorted(skills_root.iterdir()):
         if not skill_dir.is_dir():
             continue
-        skill_md = skill_dir / "SKILL.md"
-        if not skill_md.exists():
+        workflow_py = skill_dir / "workflow.py"
+        if not workflow_py.exists():
             continue
-        # Skip skills already registered via __init__.py (legacy path).
         if skill_dir.name in registry.names():
             continue
-        try:
-            manifest = load_manifest(skill_dir)
-        except (ValueError, Exception):
+        if (skill_dir / "__init__.py").exists():
             continue
-        # This skill has execution: frontmatter and no legacy registration.
-        # Register it under the shared ManifestWorkflow.
-        def _build_manifest_input(
-            *, run_id: str, run_dir: str, inbox_path: str,
-            cli_args: dict, _slug: str = skill_dir.name,
-        ) -> ManifestInput:
-            user_inputs = {
-                k: v for k, v in cli_args.items()
-                if not k.startswith("_")
-            }
-            return ManifestInput(
-                skill_slug=_slug,
-                inputs=user_inputs,
-                run_dir=run_dir,
-                run_id=run_id,
-                inbox_path=inbox_path,
-            )
 
-        from sagaflow.registry import SkillSpec
-        registry.register(SkillSpec(
-            name=skill_dir.name,
-            workflow_cls=ManifestWorkflow,
-            activities=[llm_call_activity, resolve_skill_root_activity],
-            build_input=_build_manifest_input,
-        ))
-        _log.info("registered manifested skill: %s", skill_dir.name)
+        try:
+            spec = importlib.util.spec_from_file_location(
+                f"_sagaflow_api_skill_{skill_dir.name.replace('-', '_')}",
+                str(workflow_py),
+            )
+            if spec and spec.loader:
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+        except Exception as exc:
+            _log.debug("skipping %s for api-workflow discovery: %s", skill_dir.name, exc)
+            continue
+
+    try:
+        from sagaflow.api import register_api_workflows, _WORKFLOW_REGISTRY
+        if _WORKFLOW_REGISTRY:
+            register_api_workflows(registry)
+            for name in _WORKFLOW_REGISTRY:
+                if name in registry.names():
+                    _log.info("registered api-workflow skill: %s", name)
+    except ImportError:
+        pass
 
 
 def build_extra_workflows() -> list:
@@ -364,11 +354,6 @@ def build_extra_workflows() -> list:
     here since they don't correspond to a skill in the SkillRegistry.
     """
     extras: list = []
-    try:
-        from sagaflow.manifest.temporal import ManifestWorkflow
-        extras.append(ManifestWorkflow)
-    except ImportError:
-        pass
     try:
         from skills import generic as generic_skill
         extras.extend(generic_skill.extra_workflows())
@@ -395,6 +380,18 @@ def build_extra_workflows() -> list:
     try:
         from sagaflow.durable.chain_workflow import ChainWorkflow
         extras.append(ChainWorkflow)
+    except ImportError:
+        pass
+
+    try:
+        from sagaflow.api import ApiWorkflow
+        extras.append(ApiWorkflow)
+    except ImportError:
+        pass
+
+    try:
+        from sagaflow.skill import SkillWorkflow
+        extras.append(SkillWorkflow)
     except ImportError:
         pass
 
@@ -546,6 +543,11 @@ async def run_worker(*, target: str = DEFAULT_TARGET) -> None:
     combined.extend([_slack_progress_act, _deliver_artifact_act, _slack_failure_act, _state_change_act, _finalize_act, _run_shell_act])
     from sagaflow.memory.activities import commit_outcome as _commit_outcome_act, recall_outcomes as _recall_outcomes_act
     combined.extend([_commit_outcome_act, _recall_outcomes_act])
+    from sagaflow.durable.activities import (
+        record_sdk_telemetry as _record_sdk_act,
+        budget_pre_dispatch as _budget_pre_act,
+    )
+    combined.extend([_record_sdk_act, _budget_pre_act])
     try:
         from sagaflow.durable.chain_workflow import (
             load_chain_declaration,
@@ -573,11 +575,14 @@ async def run_worker(*, target: str = DEFAULT_TARGET) -> None:
         "SAGAFLOW_MAX_CONCURRENT_WORKFLOW_TASKS",
         str(max(2, _max_activities // 2)),
     ))
+    from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
+
     worker = Worker(
         client,
         task_queue=TASK_QUEUE,
         workflows=workflows,
         activities=all_activities,
+        plugins=[PydanticAIPlugin()],
         workflow_runner=_build_sandbox_runner(),
         max_concurrent_activities=_max_activities,
         max_concurrent_workflow_tasks=_max_wf_tasks,
