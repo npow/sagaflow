@@ -125,7 +125,8 @@ def _extract_json_object(raw: str) -> dict | None:
     """Best-effort extraction of a JSON object from potentially wrapped model output.
 
     Tries, in order: direct parse, markdown code-block extraction, brace-delimited
-    substring. Returns the parsed dict, or None if all attempts fail.
+    substring, STRUCTURED_OUTPUT_START/END KEY|VALUE block. Returns the parsed dict,
+    or None if all attempts fail.
     """
     import json
     import re
@@ -163,6 +164,25 @@ def _extract_json_object(raw: str) -> dict | None:
                 return obj
         except (json.JSONDecodeError, TypeError):
             pass
+
+    # 4. STRUCTURED_OUTPUT_START/END block with KEY|VALUE lines (legacy contract).
+    block = re.search(
+        r"STRUCTURED_OUTPUT_START\s*\n(.*?)\nSTRUCTURED_OUTPUT_END",
+        text,
+        re.DOTALL,
+    )
+    if block:
+        result: dict[str, str] = {}
+        for line in block.group(1).splitlines():
+            if "|" not in line:
+                continue
+            key, _, value = line.partition("|")
+            key = key.strip()
+            value = value.strip()
+            if key:
+                result[key] = value
+        if result:
+            return result
 
     return None
 
