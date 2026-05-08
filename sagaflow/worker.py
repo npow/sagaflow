@@ -717,7 +717,7 @@ async def run_worker(*, target: str = DEFAULT_TARGET) -> None:
             except asyncio.CancelledError:
                 return
             except Exception:  # noqa: BLE001
-                _log.debug("health monitor tick error", exc_info=True)
+                _log.warning("health monitor tick FAILED — cannot verify workflow health", exc_info=True)
             await asyncio.sleep(60)
 
     monitor_task = asyncio.create_task(_run_health_monitor())
