@@ -222,13 +222,20 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
 
     # --- CLI dispatch ---
     combined_prompt = f"{inp.system_prompt}\n\n---\n\n{user_prompt}"
+    if inp.output_schema:
+        import json as _json
+        combined_prompt += (
+            "\n\n--- OUTPUT FORMAT ---\n"
+            "Respond with a JSON object matching this schema. "
+            "Output ONLY the JSON, no markdown fences:\n"
+            f"{_json.dumps(inp.output_schema, indent=2)}"
+        )
     model_alias = _TIER_TO_CLI_MODEL.get(effective_tier_name, "opus")
 
     beat_task: asyncio.Task[None] | None = None
     try:
         beat_task = asyncio.create_task(_heartbeat_loop())
     except RuntimeError:
-        # No running event loop (shouldn't happen in activity context, but safe).
         beat_task = None
 
     t0 = time.monotonic()

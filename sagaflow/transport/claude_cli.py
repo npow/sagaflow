@@ -43,7 +43,6 @@ class ClaudeCliTransport:
         permission_mode: str | None = None,
         dangerously_skip_permissions: bool = False,
         mcp_config_path: str | None = None,
-        output_schema: dict | None = None,
     ) -> ClaudeCliResult:
         args = [self._command, "-p", "--output-format", "json"]
         if mcp_config_path:
@@ -58,8 +57,6 @@ class ClaudeCliTransport:
             args.extend(["--permission-mode", permission_mode])
         if allowed_tools:
             args.extend(["--allowedTools", *allowed_tools])
-        if output_schema:
-            args.extend(["--json-schema", json.dumps(output_schema)])
         env = os.environ.copy()
         env["IS_SANDBOX"] = "1"
         process = await asyncio.create_subprocess_exec(
