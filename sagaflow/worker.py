@@ -638,8 +638,81 @@ async def run_worker(*, target: str = DEFAULT_TARGET) -> None:
     )
     try:
         await worker.run()
+    except RuntimeError as exc:
+        if "interrupted" in str(exc).lower():
+            _log.error(
+                "Temporal server returned 'interrupted' — likely wedged from "
+                "rapid worker restarts. Attempting auto-recovery by restarting "
+                "the Temporal server.",
+            )
+            if _restart_temporal_server():
+                _log.info("Temporal server restarted. Re-run the worker.")
+            else:
+                _log.error("Could not auto-restart Temporal server.")
+        _log.critical("worker crashed fatally", exc_info=True)
+        raise
     except Exception:
         _log.critical("worker crashed fatally", exc_info=True)
         raise
     finally:
         _log.info("worker shutting down (PID %d)", os.getpid())
+
+
+def _restart_temporal_server() -> bool:
+    """Find and restart the Temporal dev server process."""
+    import signal
+    import time
+
+    try:
+        out = subprocess.check_output(
+            ["pgrep", "-f", "temporal server start-dev"], text=True,
+        )
+        pids = [int(p) for p in out.strip().split("\n") if p]
+    except (subprocess.CalledProcessError, ValueError):
+        _log.warning("No Temporal server process found to restart")
+        return False
+
+    cmd_line = None
+    for pid in pids:
+        try:
+            with open(f"/proc/{pid}/cmdline") as f:
+                cmd_line = f.read().replace("\x00", " ").strip()
+                break
+        except OSError:
+            continue
+
+    for pid in pids:
+        _log.info("Sending SIGTERM to Temporal server PID %d", pid)
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        alive = any(_pid_exists(p) for p in pids)
+        if not alive:
+            break
+        time.sleep(0.5)
+
+    if cmd_line:
+        import shlex
+        args = shlex.split(cmd_line)
+        _log.info("Restarting Temporal server: %s", " ".join(args))
+        subprocess.Popen(
+            args,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        time.sleep(3)
+        return True
+    return False
+
+
+def _pid_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False

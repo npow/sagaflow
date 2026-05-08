@@ -593,6 +593,71 @@ def worker_run(detached_child: bool) -> None:
     _asyncio.run(run_worker())
 
 
+@worker.command(name="restart")
+def worker_restart() -> None:
+    """Gracefully restart the worker (SIGTERM → drain → start new)."""
+
+    import signal as _signal
+    import time as _time
+
+    pids = _find_worker_pids()
+    if not pids:
+        click.echo("No running worker found. Starting one.")
+    else:
+        for pid in pids:
+            click.echo(f"Sending SIGTERM to worker PID {pid}")
+            try:
+                os.kill(pid, _signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        deadline = _time.monotonic() + 30
+        while _time.monotonic() < deadline:
+            alive = [p for p in pids if _pid_alive(p)]
+            if not alive:
+                break
+            _time.sleep(0.5)
+        else:
+            alive = [p for p in pids if _pid_alive(p)]
+            for pid in alive:
+                click.echo(f"Worker {pid} didn't drain in 30s, sending SIGKILL")
+                try:
+                    os.kill(pid, _signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    log_dir = Path.home() / ".sagaflow" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "worker.log"
+    subprocess.Popen(
+        [sys.executable, "-m", "sagaflow.cli", "worker", "run", "--detached-child"],
+        stdout=log_file.open("ab"),
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    click.echo("New worker spawned. Check ~/.sagaflow/logs/worker.log")
+
+
+def _find_worker_pids() -> list[int]:
+    """Find PIDs of running sagaflow worker processes."""
+    try:
+        out = subprocess.check_output(
+            ["pgrep", "-f", "sagaflow.cli.*worker.*run"],
+            text=True,
+        )
+        my_pid = os.getpid()
+        return [int(p) for p in out.strip().split("\n") if p and int(p) != my_pid]
+    except (subprocess.CalledProcessError, ValueError):
+        return []
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
+
 def _ensure_worker_running() -> None:
     import asyncio as _asyncio
 
