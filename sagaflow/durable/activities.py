@@ -124,9 +124,9 @@ async def _heartbeat_loop() -> None:
 def _extract_json_object(raw: str) -> dict | None:
     """Best-effort extraction of a JSON object from potentially wrapped model output.
 
-    Tries, in order: direct parse, markdown code-block extraction, brace-delimited
-    substring, STRUCTURED_OUTPUT_START/END KEY|VALUE block. Returns the parsed dict,
-    or None if all attempts fail.
+    Tries, in order: direct parse, markdown code-block extraction,
+    STRUCTURED_OUTPUT_START/END KEY|VALUE block, brace-delimited substring.
+    Returns the parsed dict, or None if all attempts fail.
     """
     import json
     import re
@@ -154,7 +154,35 @@ def _extract_json_object(raw: str) -> dict | None:
         except (json.JSONDecodeError, TypeError):
             pass
 
-    # 3. Find outermost { ... } and try parsing.
+    # 3. STRUCTURED_OUTPUT_START/END block with KEY|VALUE lines.
+    #    Checked before brace-matching to avoid grabbing JSON fragments
+    #    embedded inside values (e.g. CLAIMS arrays).
+    #    Values can span multiple lines — accumulate until the next KEY| line.
+    block = re.search(
+        r"STRUCTURED_OUTPUT_START\s*\n(.*?)\nSTRUCTURED_OUTPUT_END",
+        text,
+        re.DOTALL,
+    )
+    if block:
+        result: dict[str, str] = {}
+        current_key: str | None = None
+        current_lines: list[str] = []
+        for line in block.group(1).splitlines():
+            parts = line.split("|", 1)
+            candidate_key = parts[0].strip() if len(parts) == 2 else ""
+            if candidate_key and re.match(r"^[A-Z][A-Z0-9_-]*$", candidate_key):
+                if current_key:
+                    result[current_key] = "\n".join(current_lines).strip()
+                current_key = candidate_key
+                current_lines = [parts[1]]
+            elif current_key is not None:
+                current_lines.append(line)
+        if current_key:
+            result[current_key] = "\n".join(current_lines).strip()
+        if result:
+            return result
+
+    # 4. Find outermost { ... } and try parsing.
     first_brace = text.find("{")
     last_brace = text.rfind("}")
     if first_brace != -1 and last_brace > first_brace:
@@ -164,25 +192,6 @@ def _extract_json_object(raw: str) -> dict | None:
                 return obj
         except (json.JSONDecodeError, TypeError):
             pass
-
-    # 4. STRUCTURED_OUTPUT_START/END block with KEY|VALUE lines (legacy contract).
-    block = re.search(
-        r"STRUCTURED_OUTPUT_START\s*\n(.*?)\nSTRUCTURED_OUTPUT_END",
-        text,
-        re.DOTALL,
-    )
-    if block:
-        result: dict[str, str] = {}
-        for line in block.group(1).splitlines():
-            if "|" not in line:
-                continue
-            key, _, value = line.partition("|")
-            key = key.strip()
-            value = value.strip()
-            if key:
-                result[key] = value
-        if result:
-            return result
 
     return None
 
