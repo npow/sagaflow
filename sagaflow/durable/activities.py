@@ -442,6 +442,7 @@ class SdkTelemetryInput:
     output_tokens: int
     duration_seconds: float
     workflow_id: str = ""
+    output_schema_used: bool = False
 
 
 @activity.defn(name="record_sdk_telemetry")
@@ -491,7 +492,7 @@ async def record_sdk_telemetry(inp: SdkTelemetryInput) -> str:
                     output_tokens=inp.output_tokens,
                     duration_seconds=inp.duration_seconds,
                     status="ok",
-                    output_schema_used=False,
+                    output_schema_used=inp.output_schema_used,
                 ),
             )
         except Exception:
