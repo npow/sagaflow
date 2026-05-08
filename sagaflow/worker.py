@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import logging
+import logging.handlers
 import os
 import subprocess
 import sys
@@ -23,6 +24,38 @@ from sagaflow.registry import SkillRegistry
 from sagaflow.temporal_client import DEFAULT_NAMESPACE, DEFAULT_TARGET, TASK_QUEUE, connect
 
 _log = logging.getLogger(__name__)
+
+
+def _configure_worker_logging() -> None:
+    """Set up structured logging to stderr + rotating file.
+
+    Must be called early in run_worker() so every module's getLogger(__name__)
+    calls actually produce output.
+    """
+    log_dir = Paths.from_env().worker_log_dir
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "worker.log"
+
+    fmt = logging.Formatter(
+        "%(asctime)s %(levelname)-7s [%(name)s] %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    )
+
+    stderr_handler = logging.StreamHandler(sys.stderr)
+    stderr_handler.setFormatter(fmt)
+
+    file_handler = logging.handlers.RotatingFileHandler(
+        log_file, maxBytes=50 * 1024 * 1024, backupCount=3,
+    )
+    file_handler.setFormatter(fmt)
+
+    root = logging.getLogger()
+    root.setLevel(logging.WARNING)
+    root.addHandler(stderr_handler)
+    root.addHandler(file_handler)
+
+    logging.getLogger("sagaflow").setLevel(logging.INFO)
+    logging.getLogger("temporalio").setLevel(logging.WARNING)
 
 _PASSTHROUGH_MODULES = ("httpx", "anthropic", "sagaflow", "pydantic", "pydantic_ai", "skills", "claude_skill_", "sniffio")
 
@@ -518,6 +551,9 @@ async def ensure_worker_running(*, target: str = DEFAULT_TARGET) -> None:
 async def run_worker(*, target: str = DEFAULT_TARGET) -> None:
     """Foreground worker. Blocks until process killed."""
 
+    _configure_worker_logging()
+    _log.info("sagaflow worker starting (PID %d)", os.getpid())
+
     client = await connect(target=target)
     registry = build_registry()
     workflows = list(registry.all_workflows())
@@ -596,4 +632,14 @@ async def run_worker(*, target: str = DEFAULT_TARGET) -> None:
     except ImportError:
         pass
 
-    await worker.run()
+    _log.info(
+        "worker ready: %d workflows, %d activities, max_activities=%d, max_wf_tasks=%d",
+        len(workflows), len(all_activities), _max_activities, _max_wf_tasks,
+    )
+    try:
+        await worker.run()
+    except Exception:
+        _log.critical("worker crashed fatally", exc_info=True)
+        raise
+    finally:
+        _log.info("worker shutting down (PID %d)", os.getpid())

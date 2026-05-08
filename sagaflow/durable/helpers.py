@@ -35,12 +35,16 @@ logger = logging.getLogger(__name__)
 
 MALFORMED_KEY = "_sagaflow_malformed"
 
-_DEFAULT_WRITE_TIMEOUT = timedelta(seconds=30)
+_DEFAULT_WRITE_TIMEOUT = timedelta(seconds=60)
 _DEFAULT_SPAWN_TIMEOUT = timedelta(minutes=15)
-_DEFAULT_EMIT_TIMEOUT = timedelta(seconds=30)
-_DEFAULT_PROGRESS_TIMEOUT = timedelta(seconds=15)
+_DEFAULT_EMIT_TIMEOUT = timedelta(seconds=60)
+_DEFAULT_PROGRESS_TIMEOUT = timedelta(seconds=30)
 _DEFAULT_DELIVER_TIMEOUT = timedelta(seconds=120)
-_DEFAULT_FINALIZE_TIMEOUT = timedelta(seconds=30)
+_DEFAULT_FINALIZE_TIMEOUT = timedelta(seconds=60)
+# Under heavy load, utility activities can sit in the queue for minutes waiting
+# for a slot while long-running spawn_subagent activities occupy all slots.
+# This timeout prevents them from silently queueing forever.
+_UTILITY_SCHEDULE_TO_START = timedelta(minutes=5)
 
 
 async def write(path: str, content: str, *, append: bool = False) -> None:
@@ -49,6 +53,7 @@ async def write(path: str, content: str, *, append: bool = False) -> None:
         "write_artifact",
         WriteArtifactInput(path=path, content=content, append=append),
         start_to_close_timeout=_DEFAULT_WRITE_TIMEOUT,
+        schedule_to_start_timeout=_UTILITY_SCHEDULE_TO_START,
         retry_policy=HAIKU_POLICY,
     )
 
@@ -119,6 +124,7 @@ async def emit(
             timestamp_iso=workflow.now().isoformat(timespec="seconds"),
         ),
         start_to_close_timeout=_DEFAULT_EMIT_TIMEOUT,
+        schedule_to_start_timeout=_UTILITY_SCHEDULE_TO_START,
         retry_policy=HAIKU_POLICY,
     )
 
@@ -153,6 +159,7 @@ async def report_progress(
                 final=final,
             ),
             start_to_close_timeout=_DEFAULT_PROGRESS_TIMEOUT,
+            schedule_to_start_timeout=_UTILITY_SCHEDULE_TO_START,
             retry_policy=HAIKU_POLICY,
         )
     except Exception:
@@ -247,6 +254,7 @@ async def _dispatch_sdk(
                 tier=tier,
             ),
             start_to_close_timeout=timedelta(seconds=10),
+            schedule_to_start_timeout=_UTILITY_SCHEDULE_TO_START,
             retry_policy=HAIKU_POLICY,
         )
         if budget_result.abort:
@@ -288,6 +296,7 @@ async def _dispatch_sdk(
             workflow_id=workflow_id,
         ),
         start_to_close_timeout=timedelta(seconds=15),
+        schedule_to_start_timeout=_UTILITY_SCHEDULE_TO_START,
         retry_policy=HAIKU_POLICY,
     )
 
@@ -401,6 +410,7 @@ async def finalize(
                     comment=summary,
                 ),
                 start_to_close_timeout=_DEFAULT_DELIVER_TIMEOUT,
+                schedule_to_start_timeout=_UTILITY_SCHEDULE_TO_START,
                 retry_policy=HAIKU_POLICY,
             )
         except Exception:
@@ -414,6 +424,7 @@ async def finalize(
             termination_label=termination_label,
         ),
         start_to_close_timeout=_DEFAULT_FINALIZE_TIMEOUT,
+        schedule_to_start_timeout=_UTILITY_SCHEDULE_TO_START,
         retry_policy=HAIKU_POLICY,
     )
 

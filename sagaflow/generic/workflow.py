@@ -67,7 +67,7 @@ _HISTORY_KEEP_TAIL = 60
 # longest leash; read/grep/glob are expected to return within seconds.
 _TOOL_ACTIVITY_TIMEOUTS: dict[str, tuple[int, int]] = {
     # name -> (start_to_close_seconds, heartbeat_seconds)
-    "write_artifact": (10, 0),
+    "write_artifact": (60, 0),
     "read_file_tool": (15, 30),
     "bash_tool": (120, 60),
     "grep_tool": (30, 30),
@@ -453,7 +453,8 @@ class ClaudeSkillWorkflow(InterventionMixin):
         await workflow.execute_activity(
             "write_artifact",
             WriteArtifactInput(path=report_path, content=report_body),
-            start_to_close_timeout=timedelta(seconds=10),
+            start_to_close_timeout=timedelta(seconds=60),
+            schedule_to_start_timeout=timedelta(minutes=5),
             retry_policy=HAIKU_POLICY,
         )
 
@@ -656,6 +657,7 @@ async def _dispatch_tool_use(
     try:
         kwargs = {
             "start_to_close_timeout": timedelta(seconds=start_to_close),
+            "schedule_to_start_timeout": timedelta(minutes=5),
             "retry_policy": HAIKU_POLICY,
         }
         if heartbeat:
