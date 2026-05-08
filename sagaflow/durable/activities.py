@@ -374,7 +374,22 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
         _record_cassette(result)
         return result
 
-    # No output_schema: return raw text wrapped in {"RESPONSE": ...}
+    # No output_schema: try structured extraction (handles legacy
+    # STRUCTURED_OUTPUT_START/END KEY|VALUE blocks) before falling back to RESPONSE.
+    structured = _extract_json_object(raw)
+    if isinstance(structured, dict) and structured:
+        import json
+        for k, v in list(structured.items()):
+            if not isinstance(v, str):
+                structured[k] = json.dumps(v)
+        structured, br = validate_boundary(structured, label=label)
+        if br.truncated_fields:
+            structured["_boundary_truncated"] = ",".join(br.truncated_fields)
+            logger.error("TRUNCATED fields in %s: %s", label, br.truncated_fields)
+        structured.update(_token_meta)
+        _record_cassette(structured)
+        return structured
+
     result = {"RESPONSE": raw or ""}
     result, br = validate_boundary(result, label=label)
     if br.truncated_fields:
