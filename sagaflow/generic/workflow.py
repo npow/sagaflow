@@ -43,6 +43,7 @@ from temporalio import workflow
 with workflow.unsafe.imports_passed_through():
     from sagaflow.durable.activities import (
         EmitFindingInput,
+        FinalizeManifestInput,
         WriteArtifactInput,
     )
     from sagaflow.durable.retry_policies import HAIKU_POLICY, SONNET_POLICY
@@ -476,6 +477,23 @@ class ClaudeSkillWorkflow(InterventionMixin):
                 timestamp_iso=timestamp,
             ),
             start_to_close_timeout=timedelta(seconds=10),
+            retry_policy=HAIKU_POLICY,
+        )
+
+        manifest_status = "FAILED" if aborted else "COMPLETED"
+        termination_label = (
+            self._abort_reason or "aborted_by_operator"
+            if aborted
+            else ("max_iterations_reached" if truncated else "")
+        )
+        await workflow.execute_activity(
+            "finalize_manifest",
+            FinalizeManifestInput(
+                run_dir=inp.run_dir,
+                status=manifest_status,
+                termination_label=termination_label,
+            ),
+            start_to_close_timeout=timedelta(seconds=30),
             retry_policy=HAIKU_POLICY,
         )
         return self._last_text
