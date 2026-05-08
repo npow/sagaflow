@@ -312,16 +312,22 @@ def cleanup_stale_runs(max_age_hours: float = 1.0) -> int:
     """Mark RUNNING runs whose manifest hasn't been modified recently as TIMED_OUT.
 
     Called at worker startup to clean up zombies from prior crashes.
+    Emits inbox entries and desktop notifications for each cleaned run so
+    external monitors (agent sessions, users) learn about the death.
     Returns the number of runs cleaned up.
     """
+    from sagaflow.inbox import Inbox, InboxEntry
+    from sagaflow.notify import notify_desktop
     from sagaflow.paths import Paths
 
-    runs_dir = Paths.from_env().runs_dir
+    paths = Paths.from_env()
+    runs_dir = paths.runs_dir
     if not runs_dir.exists():
         return 0
 
     import os
 
+    inbox = Inbox(path=paths.inbox)
     cutoff = time.time() - max_age_hours * 3600
     cleaned = 0
     for run_dir in runs_dir.iterdir():
@@ -345,7 +351,24 @@ def cleanup_stale_runs(max_age_hours: float = 1.0) -> int:
                 termination={"reason": "stale_cleanup: worker restarted, run was still RUNNING"},
             )
             cleaned += 1
-            logger.info("cleaned up stale run %s", run_dir.name)
+            run_id = run_dir.name
+            skill = data.get("skill", "unknown")
+            summary = f"stale_cleanup: run was still RUNNING when worker restarted"
+            logger.info("cleaned up stale run %s (skill=%s)", run_id, skill)
+            try:
+                inbox.append(InboxEntry(
+                    run_id=run_id,
+                    skill=skill,
+                    status="TIMED_OUT",
+                    summary=summary,
+                    timestamp=datetime.now(timezone.utc),
+                ))
+                notify_desktop(
+                    title=f"sagaflow: {run_id} TIMED_OUT",
+                    body=f"{skill}: {summary}",
+                )
+            except Exception as notify_exc:
+                logger.warning("failed to notify for stale run %s: %s", run_id, notify_exc)
         except Exception as exc:
             logger.warning("failed to clean up stale run %s: %s", run_dir.name, exc)
     return cleaned

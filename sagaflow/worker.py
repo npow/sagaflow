@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import types
+from datetime import datetime, timezone
 from pathlib import Path
 
 from temporalio.api.taskqueue.v1 import TaskQueue
@@ -480,6 +481,76 @@ def build_mission_activities() -> list:
     return activities
 
 
+from contextlib import suppress as _suppress
+
+
+_TERMINAL_STATUSES = frozenset({
+    "WORKFLOW_EXECUTION_STATUS_FAILED",
+    "WORKFLOW_EXECUTION_STATUS_TIMED_OUT",
+    "WORKFLOW_EXECUTION_STATUS_TERMINATED",
+    "WORKFLOW_EXECUTION_STATUS_CANCELED",
+})
+
+
+async def _check_orphaned_terminals(client: Client) -> None:
+    """Detect Temporal workflows in terminal state whose manifest wasn't finalized.
+
+    When a workflow dies from infrastructure failure (worker crash, Temporal
+    timeout, SQLite wedge), the in-workflow ``finalize()`` never runs — the
+    manifest stays RUNNING and no inbox entry is emitted. This function
+    catches those orphans.
+    """
+    from sagaflow.inbox import Inbox, InboxEntry
+    from sagaflow.notify import notify_desktop
+    from sagaflow.run_manifest import _manifest_path, _read_manifest, finalize_manifest
+
+    paths = Paths.from_env()
+    inbox = Inbox(path=paths.inbox)
+
+    async for wf in client.list_workflows(f"TaskQueue = '{TASK_QUEUE}'"):
+        status_name = wf.status.name if wf.status else None
+        if status_name not in ("FAILED", "TIMED_OUT", "TERMINATED", "CANCELED"):
+            continue
+
+        run_id = wf.id.removeprefix("sagaflow-")
+        run_dir = paths.run_dir_for(run_id)
+        manifest_file = _manifest_path(run_dir)
+        if not manifest_file.exists():
+            continue
+
+        try:
+            data = _read_manifest(run_dir)
+        except Exception:
+            continue
+        if data.get("status") != "RUNNING":
+            continue
+
+        skill = data.get("skill", "unknown")
+        _log.warning(
+            "orphaned terminal: %s is %s in Temporal but RUNNING in manifest (skill=%s)",
+            run_id, status_name, skill,
+        )
+        try:
+            finalize_manifest(
+                run_dir,
+                status=status_name,
+                termination={"reason": f"health_monitor: Temporal status {status_name}, finalize() never ran"},
+            )
+            inbox.append(InboxEntry(
+                run_id=run_id,
+                skill=skill,
+                status=status_name,
+                summary=f"died without finalize: Temporal marked {status_name}",
+                timestamp=datetime.now(timezone.utc),
+            ))
+            notify_desktop(
+                title=f"sagaflow: {run_id} {status_name}",
+                body=f"{skill}: died without finalize",
+            )
+        except Exception as exc:
+            _log.warning("failed to finalize orphaned run %s: %s", run_id, exc)
+
+
 async def _is_worker_reachable(client: Client) -> bool:
     try:
         resp = await client.service_client.workflow_service.describe_task_queue(
@@ -636,6 +707,20 @@ async def run_worker(*, target: str = DEFAULT_TARGET) -> None:
         "worker ready: %d workflows, %d activities, max_activities=%d, max_wf_tasks=%d",
         len(workflows), len(all_activities), _max_activities, _max_wf_tasks,
     )
+
+    async def _run_health_monitor() -> None:
+        """Background loop: detect workflows that died without finalize()."""
+        await asyncio.sleep(30)
+        while True:
+            try:
+                await _check_orphaned_terminals(client)
+            except asyncio.CancelledError:
+                return
+            except Exception:  # noqa: BLE001
+                _log.debug("health monitor tick error", exc_info=True)
+            await asyncio.sleep(60)
+
+    monitor_task = asyncio.create_task(_run_health_monitor())
     try:
         await worker.run()
     except RuntimeError as exc:
@@ -655,6 +740,9 @@ async def run_worker(*, target: str = DEFAULT_TARGET) -> None:
         _log.critical("worker crashed fatally", exc_info=True)
         raise
     finally:
+        monitor_task.cancel()
+        with _suppress(asyncio.CancelledError):
+            await monitor_task
         _log.info("worker shutting down (PID %d)", os.getpid())
 
 

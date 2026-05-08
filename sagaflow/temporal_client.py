@@ -3,16 +3,29 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 from temporalio.client import Client
 
-DEFAULT_TARGET = "localhost:7233"
-DEFAULT_NAMESPACE = "default"
-TASK_QUEUE = "sagaflow"
+DEFAULT_TARGET = os.environ.get("SAGAFLOW_TEMPORAL_TARGET", "localhost:7233")
+DEFAULT_NAMESPACE = os.environ.get("SAGAFLOW_TEMPORAL_NAMESPACE", "default")
+TASK_QUEUE = os.environ.get("SAGAFLOW_TEMPORAL_TASK_QUEUE", "sagaflow")
 
 
 class TemporalUnreachable(RuntimeError):
     """Raised when the Temporal server isn't reachable within the probe deadline."""
+
+
+def _use_cloud(namespace: str) -> bool:
+    """Detect whether to route through Netflix Temporal Cloud (nflx-temporal mTLS path).
+
+    True when SAGAFLOW_TEMPORAL_CLOUD is truthy OR the namespace ends in the
+    canonical ``.hzun2`` suffix Netflix uses for managed namespaces.
+    """
+    flag = os.environ.get("SAGAFLOW_TEMPORAL_CLOUD", "").strip().lower()
+    if flag in ("1", "true", "yes", "on"):
+        return True
+    return namespace.endswith(".hzun2")
 
 
 async def connect(
@@ -20,6 +33,17 @@ async def connect(
     namespace: str = DEFAULT_NAMESPACE,
     timeout_seconds: float = 5.0,
 ) -> Client:
+    if _use_cloud(namespace):
+        from nflx_temporal.temporal_client import create_temporal_client
+        try:
+            return await asyncio.wait_for(
+                create_temporal_client(namespace),
+                timeout=max(timeout_seconds, 30.0),
+            )
+        except (asyncio.TimeoutError, Exception) as exc:  # noqa: BLE001
+            raise TemporalUnreachable(
+                f"Netflix Temporal Cloud namespace {namespace!r} not reachable: {exc}"
+            ) from exc
     try:
         return await asyncio.wait_for(
             Client.connect(target, namespace=namespace),
