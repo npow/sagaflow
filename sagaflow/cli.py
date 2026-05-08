@@ -137,7 +137,7 @@ def _start_workflow(skill: str, args: dict) -> str:  # type: ignore[type-arg]
                 handle = await client.start_workflow(
                     spec.workflow_cls.run,
                     wf_input,
-                    id=run_id,
+                    id=f"sagaflow-{run_id}",
                     task_queue=TASK_QUEUE,
                 )
             except RPCError as exc:
@@ -690,7 +690,7 @@ def mission_launch(mission_yaml: str, workspace: str | None) -> None:
         handle = await client.start_workflow(
             MissionWorkflow.run,
             args=[m],
-            id=run_id,
+            id=f"sagaflow-{run_id}",
             task_queue=TASK_QUEUE,
             execution_timeout=timedelta(seconds=m.max_duration_sec) if m.max_duration_sec else None,
         )
