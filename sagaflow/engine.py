@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from datetime import timedelta
+from typing import Any
 
 from pydantic import BaseModel
 from pydantic_ai import Agent
@@ -27,7 +28,7 @@ TIER_TO_MODEL: dict[str, str] = {
 
 _DEFAULT_TIMEOUT = timedelta(minutes=15)
 
-_agent_cache: dict[str, TemporalAgent] = {}
+_agent_cache: dict[str, TemporalAgent[None, Any]] = {}
 
 
 def _cache_key(name: str, tier: str, system_prompt: str) -> str:
@@ -42,7 +43,7 @@ def get_sdk_agent(
     output_type: type[BaseModel] | None = None,
     max_tokens: int = 128_000,
     timeout: timedelta = _DEFAULT_TIMEOUT,
-) -> TemporalAgent:
+) -> TemporalAgent[None, Any]:
     key = _cache_key(name, tier, system_prompt)
     if key in _agent_cache:
         return _agent_cache[key]
@@ -65,5 +66,5 @@ def get_sdk_agent(
     return temporal_agent
 
 
-def all_cached_agents() -> list[TemporalAgent]:
+def all_cached_agents() -> list[TemporalAgent[None, Any]]:
     return list(_agent_cache.values())

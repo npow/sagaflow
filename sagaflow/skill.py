@@ -52,7 +52,7 @@ class Agent:
     system_prompt: str = ""
     max_tokens: int = 128_000
     tools_needed: bool = False
-    output_schema: dict | None = None
+    output_schema: dict[str, Any] | None = None
     timeout_minutes: float = 15.0
 
 
@@ -78,7 +78,11 @@ class Skill:
     run_id: str = ""
     inbox_path: str = ""
     notify: bool = True
-    _steps: list[dict] | None = None
+    _steps: list[dict[str, Any]] | None = None
+
+    async def run(self, *args: Any, **kwargs: Any) -> Any:
+        """Skill subclasses override this. Signature defines CLI args."""
+        raise NotImplementedError
 
     # -----------------------------------------------------------------
     # Agent dispatch
@@ -93,7 +97,7 @@ class Skill:
         system_prompt: str = "",
         max_tokens: int = 128_000,
         tools_needed: bool = False,
-        output_schema: dict | None = None,
+        output_schema: dict[str, Any] | None = None,
         timeout_minutes: float = 15.0,
     ) -> dict[str, str]:
         """Dispatch a single agent. Handles prompt file creation internally."""

@@ -62,7 +62,7 @@ class _WorkflowDef:
         self,
         name: str,
         phases: list[str],
-        fn: Callable[..., Coroutine],
+        fn: Callable[..., Coroutine[Any, Any, Any]],
         prompts_dir: Path | None,
     ):
         self.name = name
@@ -79,7 +79,7 @@ def workflow(
     name: str,
     *,
     phases: list[str] | None = None,
-) -> Callable:
+) -> Callable[..., Any]:
     """Decorator that registers a function as a sagaflow workflow.
 
     The decorated function's signature defines CLI args::
@@ -90,7 +90,7 @@ def workflow(
 
     ``task`` becomes a required arg, ``max_rounds`` optional with default 3.
     """
-    def decorator(fn: Callable[..., Coroutine]) -> Callable[..., Coroutine]:
+    def decorator(fn: Callable[..., Coroutine[Any, Any, Any]]) -> Callable[..., Coroutine[Any, Any, Any]]:
         # Resolve prompts/ dir relative to the file that defines the workflow
         caller_file = inspect.getfile(fn)
         prompts_dir = Path(caller_file).parent / "prompts"
@@ -199,7 +199,7 @@ async def generate_text(
     max_tokens: int | None = None,
     tools_needed: bool | None = None,
     system_prompt: str | None = None,
-    output_schema: dict | None = None,
+    output_schema: dict[str, Any] | None = None,
     timeout_minutes: float = 15.0,
 ) -> dict[str, str]:
     """Call an LLM using a prompt file or inline prompt.
@@ -335,7 +335,7 @@ class _WorkflowContext:
         self.notify = True
         self.phases: list[str] = []
         self.prompts_dir: Path | None = None
-        self.steps: list[dict] | None = None
+        self.steps: list[dict[str, Any]] | None = None
 
 
 _current_context: _WorkflowContext | None = None
@@ -474,7 +474,7 @@ def register_api_workflows(registry: Any) -> None:
         report_slack_progress,
     )
 
-    standard_activities = [
+    standard_activities: list[Callable[..., Any]] = [
         write_artifact, emit_finding, spawn_subagent,
         report_slack_progress, deliver_artifact_to_slack,
         finalize_manifest_activity, run_shell_activity,
@@ -497,7 +497,7 @@ def register_api_workflows(registry: Any) -> None:
             cli_args: dict[str, Any],
             _skill_name: str = defn.name,
             _primary: str | None = primary_name,
-            _params: list = params,
+            _params: list[tuple[str, inspect.Parameter]] = params,
         ) -> ApiWorkflowInput:
             user_args: dict[str, Any] = {}
             for pname, _ in _params:

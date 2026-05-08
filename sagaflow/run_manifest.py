@@ -92,7 +92,8 @@ def _read_manifest(run_dir: Path) -> dict[str, Any]:
     mp = _manifest_path(run_dir)
     if not mp.exists():
         return asdict(RunManifest())
-    return json.loads(mp.read_text(encoding="utf-8"))
+    data: dict[str, Any] = json.loads(mp.read_text(encoding="utf-8"))
+    return data
 
 
 def read_manifest(run_id: str) -> RunManifest:
