@@ -37,6 +37,8 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
+from temporalio import workflow
+
 logger = logging.getLogger(__name__)
 
 
@@ -191,12 +193,6 @@ class SkillInput:
     run_dir: str = ""
     notify: bool = True
     user_args: str = ""  # JSON-encoded dict of user arguments
-
-
-from temporalio import workflow
-
-with workflow.unsafe.imports_passed_through():
-    pass  # imports above are already module-level
 
 
 @workflow.defn(name="sagaflow-skill")

@@ -38,12 +38,14 @@ import inspect
 import json
 import logging
 import re
+from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 from string import Template
 from typing import Any, Callable, Coroutine
 
 import yaml
+from temporalio import workflow as _tw
 
 logger = logging.getLogger(__name__)
 
@@ -348,12 +350,6 @@ def _get_context() -> _WorkflowContext:
 # =====================================================================
 # Temporal workflow class — shared by all @workflow-decorated functions
 # =====================================================================
-
-from dataclasses import dataclass
-from temporalio import workflow as _tw
-
-with _tw.unsafe.imports_passed_through():
-    pass
 
 
 @dataclass(frozen=True)

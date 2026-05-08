@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from sagaflow.worker import (
-    _build_dir_to_module_map,
     _pre_register_package_stub,
     _register_legacy_aliases,
     build_registry,

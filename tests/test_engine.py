@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 
 def test_get_sdk_agent_returns_temporal_agent():

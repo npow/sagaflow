@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, cast
 import click
 
 if TYPE_CHECKING:
+    from temporalio.client import Client
+
     from sagaflow.inbox import Inbox
 
 
@@ -58,7 +60,7 @@ def _resolve_skill(registry, skill: str, args: dict):  # type: ignore[type-arg] 
 
 async def _count_running_workflows(client: "Client", skill_prefix: str) -> int:
     count = 0
-    async for wf in client.list_workflows(f"ExecutionStatus = 'Running'"):
+    async for wf in client.list_workflows("ExecutionStatus = 'Running'"):
         if wf.id.startswith(skill_prefix):
             count += 1
     return count
@@ -496,7 +498,6 @@ def _probe_sandbox_lint() -> tuple[str, str | None]:
     ``with workflow.unsafe.imports_passed_through():`` blocks instead.
     """
     import ast
-    import re
 
     from sagaflow.prompts import claude_skills_dir
 
@@ -548,7 +549,7 @@ def _probe_sandbox_lint() -> tuple[str, str | None]:
 
     if violations:
         return ("FAIL", "; ".join(violations))
-    return ("OK", f"no sandbox violations found")
+    return ("OK", "no sandbox violations found")
 
 
 @main.command()

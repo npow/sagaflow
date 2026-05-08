@@ -11,7 +11,6 @@ from __future__ import annotations
 import hashlib
 import logging
 from datetime import timedelta
-from typing import Any
 
 from pydantic import BaseModel
 from pydantic_ai import Agent
