@@ -6,8 +6,11 @@ a filtered .mcp.json for use with `--strict-mcp-config --mcp-config`.
 
 Auto-discovers servers from:
 1. Manual registry at ~/.sagaflow/mcp-registry.json (highest priority)
-2. Netflix AI Tool Catalog cache at ~/.cache/nflx-ai-catalog/catalogs/
+2. Optional org-specific catalog dir set by ``SAGAFLOW_MCP_CATALOG_GLOB``
 3. Claude global MCP config at ~/.claude/mcp.json
+
+Add custom categories — including org-specific bundles — via the manual
+registry's ``categories`` map.
 """
 
 from __future__ import annotations
@@ -25,14 +28,10 @@ logger = logging.getLogger(__name__)
 _REGISTRY_PATH = Path(os.environ.get(
     "SAGAFLOW_MCP_REGISTRY", os.path.expanduser("~/.sagaflow/mcp-registry.json")
 ))
-_CATALOG_GLOB = os.path.expanduser("~/.cache/nflx-ai-catalog/catalogs/*.json")
+_CATALOG_GLOB = os.environ.get("SAGAFLOW_MCP_CATALOG_GLOB", "").strip()
 _CLAUDE_MCP_PATH = Path(os.path.expanduser("~/.claude/mcp.json"))
 
 _DEFAULT_CATEGORIES: dict[str, list[str]] = {
-    "netflix-research": ["core-tools", "jira", "sourcegraph"],
-    "netflix-internal": ["core-tools", "jira"],
-    "data": ["core-tools", "kragle"],
-    "observability": ["core-tools", "observability_metrics"],
     "code-search": ["sourcegraph"],
     "web-only": [],
 }
