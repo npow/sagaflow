@@ -146,4 +146,53 @@ def format_session_start_context(*, inbox: Inbox) -> str:
             f"- {e.run_id} {e.status} {e.skill}  {e.summary}"
             f"  (sagaflow show {e.run_id})"
         )
+    drift = _format_cost_drift_warnings()
+    if drift:
+        lines.append("")
+        lines.append(drift)
     return "\n".join(lines) + "\n"
+
+
+def _format_cost_drift_warnings() -> str:
+    """Surface any recent sagaflow runs whose cost-estimate drifted >20% vs API.
+
+    Reads the per-run ``cost_audit.jsonl`` files written by spawn_subagent
+    (sagaflow ≥0.10.16). Returns empty string if no recent runs have drift,
+    so the session-start banner stays quiet on the happy path.
+    """
+    try:
+        import json as _json
+        import time as _time
+        from sagaflow.paths import Paths
+        runs_dir = Paths.from_env().runs_dir
+        if not runs_dir.exists():
+            return ""
+        cutoff = _time.time() - 7 * 86400  # last 7 days
+        flagged: list[tuple[str, float, float]] = []
+        for d in runs_dir.iterdir():
+            audit = d / "cost_audit.jsonl"
+            if not audit.exists() or audit.stat().st_mtime < cutoff:
+                continue
+            est = rep = 0.0
+            for line in audit.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    e = _json.loads(line)
+                    est += float(e.get("estimated_usd", 0.0))
+                    rep += float(e.get("reported_usd", 0.0))
+                except _json.JSONDecodeError:
+                    continue
+            if rep > 0.05:  # ignore micro-runs where rounding dominates
+                drift = (est - rep) / rep
+                if abs(drift) > 0.20:
+                    flagged.append((d.name, drift, rep))
+        if not flagged:
+            return ""
+        out = ["Cost-estimate drift detected (run `sagaflow cost audit <run_id>` for detail):"]
+        for run_id, d, rep in sorted(flagged, key=lambda x: -abs(x[1]))[:10]:
+            out.append(f"  - {run_id}: drift {d*100:+.0f}% (reported $${rep:.2f})")
+        return "\n".join(out)
+    except Exception:
+        return ""

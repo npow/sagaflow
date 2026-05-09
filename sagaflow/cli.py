@@ -1918,6 +1918,90 @@ def cost_daily(days: int, fmt: str) -> None:
     click.echo(f"{'TOTAL':<12} {'':<6} ${total:>10.4f}")
 
 
+@cost.command("audit")
+@click.argument("run_id", required=False)
+@click.option("--all", "show_all", is_flag=True, help="Audit all runs that have a cost_audit.jsonl.")
+@click.option("--threshold", default=0.10, help="Highlight runs with |drift| > this fraction (default 0.10 = 10%).")
+def cost_audit(run_id: str | None, show_all: bool, threshold: float) -> None:
+    """Compare estimated cost vs Anthropic's reported total_cost_usd per call.
+
+    Reads the cost_audit.jsonl file written by spawn_subagent for each run.
+    Prints a per-call drift table and a per-run summary; exits non-zero if
+    any audited run drifts past --threshold so this command is CI-friendly.
+    """
+    import json as _json
+    from sagaflow.paths import Paths
+
+    runs_dir = Paths.from_env().runs_dir
+    if not runs_dir.exists():
+        click.echo("no runs found")
+        sys.exit(0)
+
+    if run_id:
+        target_runs = [runs_dir / run_id]
+    elif show_all:
+        target_runs = sorted(
+            (d for d in runs_dir.iterdir() if (d / "cost_audit.jsonl").exists()),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    else:
+        # Default: most recent run with an audit file
+        candidates = sorted(
+            (d for d in runs_dir.iterdir() if (d / "cost_audit.jsonl").exists()),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if not candidates:
+            click.echo("no run has a cost_audit.jsonl yet — run a skill on sagaflow ≥0.10.16 first")
+            sys.exit(0)
+        target_runs = candidates[:1]
+
+    any_drift = False
+    for run_dir in target_runs:
+        audit = run_dir / "cost_audit.jsonl"
+        if not audit.exists():
+            click.echo(f"{run_dir.name}: no cost_audit.jsonl (run predates v0.10.16 or has no spawn_subagent calls)")
+            continue
+        entries = []
+        for line in audit.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(_json.loads(line))
+            except _json.JSONDecodeError:
+                continue
+        if not entries:
+            continue
+        total_est = sum(e["estimated_usd"] for e in entries)
+        total_rep = sum(e["reported_usd"] for e in entries)
+        click.echo(f"\n=== {run_dir.name} ({len(entries)} calls) ===")
+        click.echo(f"{'role':28} {'model':10} {'est_$':>8} {'rep_$':>8} {'drift':>8}")
+        click.echo("-" * 70)
+        for e in entries:
+            est = e["estimated_usd"]
+            rep = e["reported_usd"]
+            if rep > 0:
+                drift = (est - rep) / rep
+                drift_s = f"{drift*100:+.1f}%"
+            else:
+                drift_s = "  n/a"
+            click.echo(f"{e['role'][:28]:28} {(e.get('model') or '?')[:10]:10} ${est:>7.4f} ${rep:>7.4f} {drift_s:>8}")
+        # Summary
+        if total_rep > 0:
+            run_drift = (total_est - total_rep) / total_rep
+            flag = " ⚠" if abs(run_drift) > threshold else ""
+            click.echo("-" * 70)
+            click.echo(f"{'TOTAL':28} {'':10} ${total_est:>7.4f} ${total_rep:>7.4f} {run_drift*100:+.1f}%{flag}")
+            if abs(run_drift) > threshold:
+                any_drift = True
+        else:
+            click.echo(f"TOTAL: estimated=${total_est:.4f} reported=$0.00 (no API cost reported)")
+
+    sys.exit(1 if any_drift else 0)
+
+
 @main.group()
 def replay() -> None:
     """Deterministic replay: record and replay workflow runs without LLM calls."""

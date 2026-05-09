@@ -386,6 +386,48 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
         "_model": model,
     }
 
+    # --- automatic cost-accuracy audit ---
+    # Append every call's (estimated, reported) pair to a per-run JSONL
+    # so drift gets caught without anyone remembering to look. Logs a
+    # WARNING when |estimate - reported| / max(reported, 0.001) > 0.20,
+    # so chronic drift surfaces in the worker log too.
+    if inp.run_dir:
+        try:
+            from sagaflow.cost import estimate_cost_from_result as _ecfr
+            estimated = _ecfr(_token_meta)
+            reported = float(cli_result.total_cost_usd or 0.0)
+            audit_entry = {
+                "ts": time.time(),
+                "role": inp.role,
+                "tier": effective_tier_name,
+                "model": model,
+                "estimated_usd": round(estimated, 6),
+                "reported_usd": round(reported, 6),
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cache_creation_tokens": cache_creation_tokens,
+                "cache_read_tokens": cache_read_tokens,
+                "duration_s": elapsed,
+            }
+            audit_path = Path(inp.run_dir) / "cost_audit.jsonl"
+            with audit_path.open("a", encoding="utf-8") as f:
+                import json as _json
+                f.write(_json.dumps(audit_entry) + "\n")
+            if reported > 0.0:
+                drift = (estimated - reported) / reported
+                if abs(drift) > 0.20:
+                    logger.warning(
+                        "cost-estimate drift %s%.0f%% on %s (est=$%.4f reported=$%.4f model=%s)",
+                        "+" if drift >= 0 else "",
+                        drift * 100,
+                        Path(inp.run_dir).name,
+                        estimated,
+                        reported,
+                        model,
+                    )
+        except Exception:
+            logger.debug("cost audit failed", exc_info=True)
+
     def _record_cassette(output: dict[str, str]) -> None:
         if not inp.run_dir:
             return
