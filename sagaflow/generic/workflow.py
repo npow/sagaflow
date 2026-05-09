@@ -382,6 +382,13 @@ class ClaudeSkillWorkflow(InterventionMixin):
                     tools=ALL_TOOLS,
                     tier_name=inp.tier_name,
                     max_tokens=_CLAUDE_MAX_TOKENS,
+                    # Threads run_dir into the activity so cost_audit.jsonl
+                    # + run_manifest step writes can land. Without this,
+                    # the generic-interpreter loop silently disabled cost
+                    # reporting — `sagaflow cost runs` reported $0.0000 / 0
+                    # steps even after dozens of tool-use turns.
+                    run_dir=inp.run_dir,
+                    role="generic-loop",
                 ),
                 result_type=ClaudeResponse,
                 start_to_close_timeout=timedelta(seconds=300),
@@ -560,6 +567,10 @@ class SubagentWorkflow:
                     tier_name=inp.tier_name,
                     max_tokens=_CLAUDE_MAX_TOKENS,
                     output_schema=inp.output_schema,
+                    # Subagent runs use the parent run_dir so cost data
+                    # rolls up to the parent's cost_audit.jsonl + manifest.
+                    run_dir=inp.parent_run_dir,
+                    role="generic-subagent",
                 ),
                 result_type=ClaudeResponse,
                 start_to_close_timeout=timedelta(seconds=300),

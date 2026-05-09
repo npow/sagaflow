@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import os
 import re
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -28,6 +30,8 @@ from temporalio import activity
 
 from sagaflow.durable.activities import _heartbeat_loop
 from sagaflow.engine import TIER_TO_MODEL
+
+logger = logging.getLogger(__name__)
 
 # Safety caps applied inside the activities regardless of what Claude requests.
 _READ_FILE_DEFAULT_MAX_BYTES = 1_048_576  # 1 MiB
@@ -72,6 +76,16 @@ class CallClaudeInput:
     tier_name: str                # "HAIKU" | "SONNET" | "OPUS"
     max_tokens: int = 128_000
     output_schema: dict | None = None  # JSON Schema → output_config.format
+    # When ``run_dir`` is set, call_claude_with_tools appends a step to
+    # ``run_manifest.json`` and a row to ``cost_audit.jsonl``. Empty string
+    # disables both writes and emits a WARNING (mirrors spawn_subagent's
+    # observability contract). The generic interpreter is the primary caller
+    # — see ``sagaflow/generic/workflow.py`` for the threading.
+    run_dir: str = ""
+    step_index: int = 0
+    # ``role`` differentiates callers (e.g. "generic-loop", "generic-subagent")
+    # in the cost audit; defaults to "generic" so every row has a non-empty role.
+    role: str = "generic"
 
 
 @dataclass(frozen=True)
@@ -88,6 +102,12 @@ class ClaudeResponse:
     stop_reason: str = ""         # "end_turn" | "tool_use" | "max_tokens" | ...
     input_tokens: int = 0
     output_tokens: int = 0
+    # Cache-token classes from Anthropic's usage block. Anthropic prices
+    # cache_read at ~10% of regular input and cache_creation at ~125% — so
+    # an estimator that ignores these classes will be wildly wrong on cached
+    # workloads. Capturing them here keeps cost_audit.jsonl honest.
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
 
 
 # Tool-passing approach: talks to `anthropic.AsyncAnthropic` directly for
@@ -137,7 +157,30 @@ async def call_claude_with_tools(inp: CallClaudeInput) -> ClaudeResponse:
     Heartbeats every 20s via a background task while the LLM call is in flight,
     matching the `spawn_subagent` pattern so workflows can set a reasonable
     `heartbeat_timeout` without false-tripping on slow LLM responses.
+
+    When ``inp.run_dir`` is set, this activity records cost data the same way
+    ``spawn_subagent`` does: appends a ``StepRecord`` to ``run_manifest.json``
+    and a row to ``cost_audit.jsonl``. Without ``run_dir`` every observability
+    sink silently no-ops, so a WARNING is emitted to make the missing context
+    visible (mirrors the loud-fail contract from sagaflow/durable/activities.py).
     """
+    # Loud-fail when a workflow forgets to thread `run_dir`. Mirrors the
+    # spawn_subagent contract — see the comment in
+    # sagaflow/durable/activities.py for context.
+    if not inp.run_dir:
+        try:
+            _wf_id = activity.info().workflow_id
+        except Exception:
+            _wf_id = "<unknown>"
+        logger.warning(
+            "call_claude_with_tools called without run_dir (workflow=%s role=%s tier=%s); "
+            "per-step manifest and cost_audit.jsonl writes are disabled for this call. "
+            "Pass run_dir on CallClaudeInput from the calling workflow.",
+            _wf_id,
+            inp.role,
+            inp.tier_name,
+        )
+
     model_id = _resolve_model_id(inp.tier_name)
     client = _get_anthropic_client()
 
@@ -147,6 +190,7 @@ async def call_claude_with_tools(inp: CallClaudeInput) -> ClaudeResponse:
     except RuntimeError:
         beat_task = None
 
+    elapsed_start = time.monotonic()
     try:
         api_kwargs: dict = {
             "model": model_id,
@@ -165,6 +209,7 @@ async def call_claude_with_tools(inp: CallClaudeInput) -> ClaudeResponse:
             beat_task.cancel()
             with contextlib.suppress(BaseException):
                 await beat_task
+    elapsed = time.monotonic() - elapsed_start
 
     text, tool_uses = _extract_content(response)
     # Hard-cap the text return so a runaway LLM response (or many small text
@@ -172,12 +217,82 @@ async def call_claude_with_tools(inp: CallClaudeInput) -> ClaudeResponse:
     # ~16× max_tokens=4096 worth of latin-1 text — well past anything legit.
     text, _ = _truncate_to_cap(text, 256 * 1024, "claude_response.text")
     usage = getattr(response, "usage", None)
+    input_tokens = getattr(usage, "input_tokens", 0) if usage is not None else 0
+    output_tokens = getattr(usage, "output_tokens", 0) if usage is not None else 0
+    cache_creation_tokens = (
+        getattr(usage, "cache_creation_input_tokens", 0) if usage is not None else 0
+    ) or 0
+    cache_read_tokens = (
+        getattr(usage, "cache_read_input_tokens", 0) if usage is not None else 0
+    ) or 0
+
+    # --- run manifest recording ---
+    if inp.run_dir:
+        try:
+            from sagaflow.run_manifest import StepRecord, append_step as _append_step
+            _append_step(
+                Path(inp.run_dir),
+                StepRecord(
+                    step=inp.step_index,
+                    role=inp.role,
+                    model=model_id,
+                    tier=inp.tier_name,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    duration_seconds=elapsed,
+                    status="ok",
+                    output_schema_used=inp.output_schema is not None,
+                ),
+            )
+        except Exception:
+            logger.debug("call_claude_with_tools manifest append failed", exc_info=True)
+
+    # --- cost-audit row ---
+    # Anthropic's SDK does not return total_cost_usd directly (the CLI does
+    # via its wrapper), so reported_usd is recorded as 0.0 here. The drift
+    # warning in sagaflow/durable/activities.py guards on `reported > 0.0`,
+    # so this naturally skips the drift comparison for SDK-driven calls
+    # while still preserving the estimated-cost record.
+    if inp.run_dir:
+        try:
+            from sagaflow.cost import estimate_cost_from_result as _ecfr
+            _token_meta = {
+                "_input_tokens": str(input_tokens),
+                "_output_tokens": str(output_tokens),
+                "_cache_creation_tokens": str(cache_creation_tokens),
+                "_cache_read_tokens": str(cache_read_tokens),
+                "_total_cost_usd_reported": "0.0",
+                "_model": model_id,
+            }
+            estimated = _ecfr(_token_meta)
+            audit_entry = {
+                "ts": time.time(),
+                "role": inp.role,
+                "tier": inp.tier_name,
+                "model": model_id,
+                "estimated_usd": round(estimated, 6),
+                "reported_usd": 0.0,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cache_creation_tokens": cache_creation_tokens,
+                "cache_read_tokens": cache_read_tokens,
+                "duration_s": elapsed,
+            }
+            audit_path = Path(inp.run_dir) / "cost_audit.jsonl"
+            with audit_path.open("a", encoding="utf-8") as f:
+                import json as _json
+                f.write(_json.dumps(audit_entry) + "\n")
+        except Exception:
+            logger.debug("call_claude_with_tools cost audit failed", exc_info=True)
+
     return ClaudeResponse(
         text=text,
         tool_uses=tool_uses,
         stop_reason=getattr(response, "stop_reason", "") or "",
-        input_tokens=getattr(usage, "input_tokens", 0) if usage is not None else 0,
-        output_tokens=getattr(usage, "output_tokens", 0) if usage is not None else 0,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_creation_input_tokens=cache_creation_tokens,
+        cache_read_input_tokens=cache_read_tokens,
     )
 
 
