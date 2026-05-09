@@ -867,15 +867,40 @@ def mission_status(workflow_id: str) -> None:
 @mission.command(name="abort")
 @click.argument("workflow_id")
 @click.option("--reason", default="user-abort", help="Reason for aborting.")
-def mission_abort(workflow_id: str, reason: str) -> None:
-    """Send the abort signal to a running MissionWorkflow."""
+@click.option("--graceful", is_flag=True,
+              help="Only send the abort signal; don't force-terminate.")
+def mission_abort(workflow_id: str, reason: str, graceful: bool) -> None:
+    """Abort a running MissionWorkflow.
+
+    Default: send the abort signal AND force-terminate at the Temporal level.
+    Use --graceful to send the signal only.
+    """
     import asyncio as _a
     from sagaflow.temporal_client import connect
 
+    signaled = False
+    terminated = False
+
     async def _go() -> None:
+        nonlocal signaled, terminated
         client = await connect()
         handle = client.get_workflow_handle(workflow_id)
-        await handle.signal("abort", reason)
+        try:
+            await handle.signal("abort", reason)
+            signaled = True
+        except Exception as exc:  # noqa: BLE001
+            click.echo(f"warn: abort signal failed (will still terminate): {exc}", err=True)
+        if graceful:
+            return
+        try:
+            await handle.terminate(reason=reason)
+            terminated = True
+        except Exception as exc:  # noqa: BLE001
+            msg = str(exc).lower()
+            if "already" in msg and ("completed" in msg or "terminated" in msg):
+                terminated = True
+            else:
+                raise
 
     try:
         _a.run(_go())
@@ -884,9 +909,16 @@ def mission_abort(workflow_id: str, reason: str) -> None:
         if "not found" in msg or "not_found" in msg:
             click.echo(f"error: workflow {workflow_id!r} not found", err=True)
             sys.exit(1)
-        click.echo(f"error: abort signal failed: {exc}", err=True)
+        click.echo(f"error: abort failed: {exc}", err=True)
         sys.exit(1)
-    click.echo(f"abort signal sent to {workflow_id}")
+    parts = []
+    if signaled:
+        parts.append("signal sent")
+    if terminated:
+        parts.append("terminated")
+    elif graceful:
+        parts.append("graceful (signal only)")
+    click.echo(f"{workflow_id}: {' + '.join(parts) or 'no-op'}")
 
 
 # ---------------------------------------------------------------------------
@@ -1217,18 +1249,42 @@ def intervention_release(run_id: str) -> None:
 @main.command(name="abort")
 @click.argument("run_id")
 @click.option("--reason", default="user-abort", help="Reason for aborting")
-def intervention_abort(run_id: str, reason: str) -> None:
-    """Abort a running workflow."""
+@click.option("--graceful", is_flag=True,
+              help="Only send the in-workflow abort signal; don't force-terminate.")
+def intervention_abort(run_id: str, reason: str, graceful: bool) -> None:
+    """Abort a running workflow.
+
+    Default: send the abort signal AND force-terminate at the Temporal level.
+    Use --graceful to send the signal only (workflow ack's at next phase boundary).
+    """
     import asyncio as _a
 
     from sagaflow.temporal_client import connect
 
     wf_id = _resolve_run_workflow_id(run_id)
+    signaled = False
+    terminated = False
 
     async def _go() -> None:
+        nonlocal signaled, terminated
         client = await connect()
         handle = client.get_workflow_handle(wf_id)
-        await handle.signal("abort", reason)
+        try:
+            await handle.signal("abort", reason)
+            signaled = True
+        except Exception as exc:  # noqa: BLE001
+            click.echo(f"warn: abort signal failed (will still terminate): {exc}", err=True)
+        if graceful:
+            return
+        try:
+            await handle.terminate(reason=reason)
+            terminated = True
+        except Exception as exc:  # noqa: BLE001
+            msg = str(exc).lower()
+            if "already" in msg and ("completed" in msg or "terminated" in msg):
+                terminated = True
+            else:
+                raise
 
     try:
         _a.run(_go())
@@ -1237,9 +1293,16 @@ def intervention_abort(run_id: str, reason: str) -> None:
         if "not found" in msg or "not_found" in msg:
             click.echo(f"error: workflow {wf_id!r} not found", err=True)
             sys.exit(1)
-        click.echo(f"error: abort signal failed: {exc}", err=True)
+        click.echo(f"error: abort failed: {exc}", err=True)
         sys.exit(1)
-    click.echo(f"abort signal sent to {run_id}")
+    parts = []
+    if signaled:
+        parts.append("signal sent")
+    if terminated:
+        parts.append("terminated")
+    elif graceful:
+        parts.append("graceful (signal only)")
+    click.echo(f"{run_id}: {' + '.join(parts) or 'no-op'}")
 
 
 @main.command(name="conversation")

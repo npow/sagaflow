@@ -13,7 +13,38 @@ _log = logging.getLogger(__name__)
 
 DEFAULT_TARGET = os.environ.get("SAGAFLOW_TEMPORAL_TARGET", "localhost:7233")
 DEFAULT_NAMESPACE = os.environ.get("SAGAFLOW_TEMPORAL_NAMESPACE", "default")
-TASK_QUEUE = os.environ.get("SAGAFLOW_TEMPORAL_TASK_QUEUE", "sagaflow")
+
+
+def _default_task_queue() -> str:
+    """Default task queue is host-scoped to prevent cross-host filesystem races.
+
+    Sagaflow activities pass file paths (~/.sagaflow/runs/...) by reference,
+    so an activity scheduled by host A but picked up by host B fails with
+    FileNotFoundError or PermissionError. Default to a host-unique queue
+    so workers on different machines stay isolated by default. To share a
+    queue across hosts (e.g. on a shared NFS mount), set
+    SAGAFLOW_TEMPORAL_TASK_QUEUE explicitly.
+    """
+    explicit = os.environ.get("SAGAFLOW_TEMPORAL_TASK_QUEUE")
+    if explicit:
+        return explicit
+    suffix = ""
+    try:
+        with open("/etc/machine-id", encoding="ascii") as f:
+            suffix = f.read().strip()[:12]
+    except OSError:
+        pass
+    if not suffix:
+        try:
+            import socket
+            suffix = socket.gethostname() or ""
+        except Exception:  # noqa: BLE001
+            suffix = ""
+    suffix = (suffix or "default").replace(" ", "-")[:48]
+    return f"sagaflow-{suffix}"
+
+
+TASK_QUEUE = _default_task_queue()
 DEFAULT_PROVIDER = os.environ.get("SAGAFLOW_TEMPORAL_PROVIDER", "local").strip().lower()
 
 PROVIDER_ENTRY_POINT_GROUP = "sagaflow.temporal_providers"

@@ -93,6 +93,12 @@ class SpawnSubagentInput:
     step_index: int = 0
     mcp_config_path: str | None = None
     cli_timeout_seconds: float = 3600.0
+    # If set, the activity uses this inline content as the user prompt and
+    # ignores ``user_prompt_path`` for reading. ``user_prompt_path`` is still
+    # used as a label for logging. Inline prompts avoid the file-write +
+    # file-read pair across activities, which is fragile in multi-host
+    # deployments where filesystem isn't shared.
+    user_prompt: str | None = None
 
 
 _cli_singleton: ClaudeCliTransport | None = None
@@ -206,11 +212,18 @@ _TIER_TO_CLI_MODEL: dict[str, str] = {
 @activity.defn(name="spawn_subagent")
 async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
     prompt_path = Path(inp.user_prompt_path)
-    if not prompt_path.exists():
-        raise FileNotFoundError(f"subagent input file missing: {prompt_path}")
-    user_prompt = prompt_path.read_text(encoding="utf-8")
-    if not user_prompt.strip():
-        raise FileNotFoundError(f"subagent input file is empty: {prompt_path}")
+    if inp.user_prompt is not None:
+        # Inline prompt path — no filesystem read. ``prompt_path`` is still used
+        # as a logging label and as the basis for ``label = run_id/role:stem`` below.
+        user_prompt = inp.user_prompt
+        if not user_prompt.strip():
+            raise ValueError(f"inline subagent prompt is empty (label={prompt_path.name})")
+    else:
+        if not prompt_path.exists():
+            raise FileNotFoundError(f"subagent input file missing: {prompt_path}")
+        user_prompt = prompt_path.read_text(encoding="utf-8")
+        if not user_prompt.strip():
+            raise FileNotFoundError(f"subagent input file is empty: {prompt_path}")
 
     _PROMPT_SIZE_WARN = 8192
     if len(user_prompt) > _PROMPT_SIZE_WARN:
