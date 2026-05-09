@@ -182,6 +182,9 @@ def skill(
         cls_name = f"_SagaflowSkillWorkflow_{safe_name}"
 
         async def _run(self, inp):  # type: ignore[no-untyped-def]
+            # The Any-typed signature above is purely a placeholder; Temporal
+            # introspects __annotations__ (set below after class construction)
+            # to know the actual InputCls type for payload deserialization.
             ctx = SkillContext(
                 run_id=inp.run_id,
                 run_dir=inp.run_dir,
@@ -215,6 +218,10 @@ def skill(
         _run.__module__ = module_name
         _run.__qualname__ = f"{cls_name}.run"
         _run.__name__ = "run"
+        # Type annotation is load-bearing: Temporal's payload converter reads
+        # __annotations__["inp"] to deserialize the workflow input back into
+        # the InputCls dataclass. Without this, the workflow receives a dict.
+        _run.__annotations__ = {"inp": InputCls, "return": Any}
         decorated_run = workflow.run(_run)
 
         _Workflow = type(cls_name, (), {"run": decorated_run})

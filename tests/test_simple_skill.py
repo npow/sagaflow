@@ -59,6 +59,44 @@ def test_decorator_rejects_function_without_ctx_first_param() -> None:
             return name
 
 
+def test_workflow_run_has_input_class_annotation() -> None:
+    """Regression guard: Temporal's payload converter introspects
+    ``run.__annotations__["inp"]`` to deserialize the workflow input. A
+    missing or wrong annotation causes the workflow to receive a raw dict
+    instead of the InputCls instance, surfacing as
+    ``AttributeError: 'dict' object has no attribute 'run_id'`` at runtime
+    inside the worker — invisible to structural-only unit tests."""
+    run_method = hello.spec.workflow_cls.run
+    annotations = run_method.__annotations__
+    assert "inp" in annotations, "run method must annotate its 'inp' parameter for Temporal"
+    inp_type = annotations["inp"]
+    # The input class is a dataclass synthesized from the skill's signature.
+    assert hasattr(inp_type, "__dataclass_fields__"), f"inp annotation must be a dataclass, got {inp_type!r}"
+    # Must include the framework-injected fields plus user params.
+    field_names = set(inp_type.__dataclass_fields__.keys())
+    assert {"run_id", "run_dir", "inbox_path", "name"}.issubset(field_names)
+
+
+def test_input_class_roundtrips_through_temporal_payload_converter() -> None:
+    """Catches the same class of failure as above but at one layer deeper:
+    even if the annotation is set, Temporal must be able to serialize the
+    InputCls instance, then deserialize it back into the same type. Uses
+    Temporal's default converter directly — no server, ~milliseconds."""
+    from temporalio.converter import default
+
+    converter = default()
+    inp = hello.spec.build_input(
+        run_id="r1", run_dir="/tmp/r1", inbox_path="/tmp/INBOX.md",
+        cli_args={"name": "alice"},
+    )
+    payloads = converter.payload_converter.to_payloads([inp])
+    inp_type = hello.spec.workflow_cls.run.__annotations__["inp"]
+    decoded = converter.payload_converter.from_payloads(payloads, [inp_type])
+    assert decoded[0].name == "alice"
+    assert decoded[0].run_id == "r1"
+    assert isinstance(decoded[0], inp_type), f"decoded type {type(decoded[0])!r} != expected {inp_type!r}"
+
+
 def test_required_param_without_default_raises_when_omitted() -> None:
     @skill("needs-name")
     async def needs_name(ctx, name: str) -> str:  # no default
