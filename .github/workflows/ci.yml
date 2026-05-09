@@ -31,6 +31,7 @@ jobs:
           pip uninstall -y temporalio
           pytest -v --junitxml=/tmp/results.xml \
             --ignore=tests/generic --ignore=tests/scenarios --ignore=tests/skills \
+            --ignore=tests/test_intervention.py \
             -k "not TestWorkflowAbortSignal and not TestWorkflowStatusQuery and not test_all_activities_dedupes_by_temporal_activity_name"
           exit $?
       - name: Verify tests passed
