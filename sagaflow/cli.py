@@ -554,6 +554,75 @@ def _probe_sandbox_lint() -> tuple[str, str | None]:
     return ("OK", "no sandbox violations found")
 
 
+def _probe_stale_runs() -> tuple[str, str | None]:
+    """Detect runs that are RUNNING but whose progress.json hasn't been
+    touched in a while, AND surface payload-size warnings from worker.log.
+
+    The deep-research workflow (and any other findings-accumulating skill)
+    can wedge silently when workflow state grows past Temporal's 2MB payload
+    cap (TMPRL1103). The skill keeps writing per-direction files to disk, so
+    `runs/<id>/` keeps looking healthy while the orchestrator can no longer
+    advance. Without an external check, the failure mode is invisible:
+    `sagaflow list` keeps showing RUNNING and `<task-notification>` never
+    fires. This probe reads three on-disk signals — progress.json mtime per
+    RUNNING run, the latest worker.log tail for TMPRL1103, and a freshness
+    gap heuristic — and reports findings in the doctor output.
+    """
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    home = Path.home() / ".sagaflow"
+    runs_dir = home / "runs"
+    log_path = home / "logs" / "worker.log"
+    if not runs_dir.is_dir():
+        return ("OK", "no runs dir")
+
+    STALE_MINUTES = 10
+    now = datetime.now(timezone.utc).timestamp()
+    stale: list[str] = []
+    for run_dir in runs_dir.iterdir():
+        if not run_dir.is_dir():
+            continue
+        manifest = run_dir / "run_manifest.json"
+        if not manifest.exists():
+            continue
+        try:
+            import json as _json
+            m = _json.loads(manifest.read_text())
+        except (OSError, _json.JSONDecodeError):
+            continue
+        if m.get("status") != "RUNNING":
+            continue
+        progress = run_dir / "progress.json"
+        if not progress.exists():
+            continue
+        age_min = (now - progress.stat().st_mtime) / 60.0
+        if age_min > STALE_MINUTES:
+            stale.append(f"{run_dir.name} (progress.json {age_min:.0f}m stale)")
+
+    payload_warn = ""
+    if log_path.exists():
+        try:
+            with log_path.open("rb") as fh:
+                fh.seek(0, 2)
+                size = fh.tell()
+                fh.seek(max(0, size - 65536))
+                tail = fh.read().decode("utf-8", errors="replace")
+            tmprl_count = tail.count("TMPRL1103")
+            if tmprl_count > 0:
+                payload_warn = f"{tmprl_count}× TMPRL1103 in last 64KB of worker.log"
+        except OSError:
+            pass
+
+    if stale and payload_warn:
+        return ("FAIL", f"stale runs: {', '.join(stale)}; payload warnings: {payload_warn}")
+    if stale:
+        return ("WARN", f"stale runs (no progress >{STALE_MINUTES}m): {', '.join(stale)}")
+    if payload_warn:
+        return ("WARN", payload_warn)
+    return ("OK", "no stale runs, no payload warnings")
+
+
 @main.command()
 def doctor() -> None:
     """Run preflight checks."""
@@ -564,6 +633,7 @@ def doctor() -> None:
         ("hook", _probe_hook),
         ("skill-imports", _probe_skill_imports),
         ("sandbox-lint", _probe_sandbox_lint),
+        ("stale-runs", _probe_stale_runs),
     ]
     any_fail = False
     for label, probe in checks:
