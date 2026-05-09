@@ -235,6 +235,29 @@ _TIER_TO_CLI_MODEL: dict[str, str] = {
 
 @activity.defn(name="spawn_subagent")
 async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
+    # Loud-fail when a workflow forgets to thread `run_dir` through. Every
+    # disk-side observability hook in this activity (per-step manifest,
+    # cost_audit.jsonl, budget enforcer, claim-check spill, replay cassette,
+    # routing/Slack progress) keys off `inp.run_dir` and silently no-ops when
+    # it's empty. Dropping a debug-level "skipped" line here was the previous
+    # behaviour and produced the failure mode where deep-research ran for
+    # months reporting $0.0000 / 0 steps in `sagaflow cost runs` despite
+    # spawning hundreds of subagents. Surface at WARNING so the breadcrumb
+    # lands in the worker log next to the run that triggered it.
+    if not inp.run_dir:
+        try:
+            _wf_id = activity.info().workflow_id
+        except Exception:
+            _wf_id = "<unknown>"
+        logger.warning(
+            "spawn_subagent called without run_dir (workflow=%s role=%s tier=%s); "
+            "per-step manifest, cost_audit.jsonl, budget enforcer, and replay "
+            "cassette writes are disabled for this call. Pass run_dir on "
+            "SpawnSubagentInput from the calling workflow.",
+            _wf_id,
+            inp.role,
+            inp.tier_name,
+        )
     prompt_path = Path(inp.user_prompt_path)
     if inp.user_prompt is not None:
         # Inline prompt path — no filesystem read. ``prompt_path`` is still used
