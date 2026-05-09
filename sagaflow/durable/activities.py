@@ -324,6 +324,8 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
     raw = cli_result.stdout
     input_tokens = cli_result.input_tokens
     output_tokens = cli_result.output_tokens
+    cache_creation_tokens = cli_result.cache_creation_input_tokens
+    cache_read_tokens = cli_result.cache_read_input_tokens
     model = model_alias
 
     # --- budget post-dispatch ---
@@ -332,6 +334,8 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
         step_cost = estimate_cost_from_result({
             "_input_tokens": str(input_tokens),
             "_output_tokens": str(output_tokens),
+            "_cache_creation_tokens": str(cache_creation_tokens),
+            "_cache_read_tokens": str(cache_read_tokens),
             "_model": model,
         })
         newly_crossed = _budget_enforcer.record_cost(step_cost)
@@ -373,6 +377,12 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
     _token_meta = {
         "_input_tokens": str(input_tokens),
         "_output_tokens": str(output_tokens),
+        "_cache_creation_tokens": str(cache_creation_tokens),
+        "_cache_read_tokens": str(cache_read_tokens),
+        # Anthropic's authoritative cost from the API response — keep
+        # alongside our estimator so callers can compare estimate vs.
+        # ground truth and catch rate-card drift early.
+        "_total_cost_usd_reported": str(cli_result.total_cost_usd),
         "_model": model,
     }
 

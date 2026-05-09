@@ -3332,7 +3332,7 @@ wheels = [
 
 [[package]]
 name = "sagaflow"
-version = "0.10.13"
+version = "0.10.15"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },

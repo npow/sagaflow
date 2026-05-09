@@ -21,8 +21,16 @@ class ClaudeCliResult:
     stdout: str
     stderr: str
     exit_code: int
+    # ``input_tokens`` is the **regular** (non-cache) input only — the
+    # part that pays the full input rate. Cache-creation and cache-read
+    # tokens are reported separately so cost attribution stays honest;
+    # cache reads are ~10% of the input rate and dominate the raw count
+    # for long autonomous agent loops, so summing them all into one field
+    # produces wildly inflated cost estimates.
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
     total_cost_usd: float = 0.0
 
 
@@ -93,6 +101,8 @@ def _parse_json_result(stdout: str, stderr: str, exit_code: int) -> ClaudeCliRes
     """Extract text result and usage from ``--output-format json`` output."""
     input_tokens = 0
     output_tokens = 0
+    cache_creation_input_tokens = 0
+    cache_read_input_tokens = 0
     total_cost_usd = 0.0
     result_text = stdout
 
@@ -101,9 +111,13 @@ def _parse_json_result(stdout: str, stderr: str, exit_code: int) -> ClaudeCliRes
         result_text = data.get("result", stdout)
         total_cost_usd = float(data.get("total_cost_usd", 0))
         usage = data.get("usage", {})
-        input_tokens = int(usage.get("input_tokens", 0)) + int(
-            usage.get("cache_creation_input_tokens", 0)
-        ) + int(usage.get("cache_read_input_tokens", 0))
+        # Keep the three input categories separate. Anthropic prices them
+        # very differently (cache_read ≈ 10% of regular input), so summing
+        # them produces ~5-10× inflated cost estimates for long agent loops
+        # where most input is cache-hit.
+        input_tokens = int(usage.get("input_tokens", 0))
+        cache_creation_input_tokens = int(usage.get("cache_creation_input_tokens", 0))
+        cache_read_input_tokens = int(usage.get("cache_read_input_tokens", 0))
         output_tokens = int(usage.get("output_tokens", 0))
     except (json.JSONDecodeError, ValueError, TypeError):
         logger.warning("Failed to parse JSON from claude CLI output; cost will not be tracked")
@@ -114,6 +128,8 @@ def _parse_json_result(stdout: str, stderr: str, exit_code: int) -> ClaudeCliRes
         exit_code=exit_code,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        cache_creation_input_tokens=cache_creation_input_tokens,
+        cache_read_input_tokens=cache_read_input_tokens,
         total_cost_usd=total_cost_usd,
     )
 
