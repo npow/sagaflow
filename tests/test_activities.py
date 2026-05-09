@@ -190,3 +190,92 @@ async def test_spawn_subagent_cancels_heartbeat_on_completion(tmp_path) -> None:
     assert "_input_tokens" in parsed
     # Fast call → heartbeat should fire zero or one time before cancellation.
     assert beat.call_count <= 2
+
+
+async def test_spawn_subagent_writes_cost_audit_when_run_dir_set(tmp_path, caplog) -> None:
+    """spawn_subagent must populate cost_audit.jsonl + run_manifest steps when
+    inp.run_dir is set. Regression for the silent-skip bug where deep-research
+    and every @skill workflow reported $0.0000 / 0 steps in `sagaflow cost runs`
+    because they constructed SpawnSubagentInput without run_dir, defaulting
+    inp.run_dir="" and silently disabling every observability sink. See
+    npow/sagaflow#4 (loud WARNING) and npow/claude-skills#11 (proximate fix).
+    """
+    import json as _json
+
+    run_dir = tmp_path
+    input_path = run_dir / "in.txt"
+    input_path.write_text("user prompt here", encoding="utf-8")
+    cli_call = AsyncMock(
+        return_value=MagicMock(
+            stdout="ok",
+            input_tokens=10,
+            output_tokens=5,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+            total_cost_usd=0.0001,
+        )
+    )
+    fake_cli = MagicMock(call=cli_call)
+    with patch("sagaflow.durable.activities._get_cli", return_value=fake_cli):
+        await spawn_subagent(
+            SpawnSubagentInput(
+                role="greeter",
+                tier_name="HAIKU",
+                system_prompt="be brief",
+                user_prompt_path=str(input_path),
+                max_tokens=128,
+                tools_needed=False,
+                run_dir=str(run_dir),
+            )
+        )
+
+    audit_path = run_dir / "cost_audit.jsonl"
+    assert audit_path.exists(), "cost_audit.jsonl must be written when run_dir is set"
+    rows = [_json.loads(line) for line in audit_path.read_text().splitlines() if line.strip()]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["role"] == "greeter"
+    assert row["tier"] == "HAIKU"
+    assert row["input_tokens"] == 10
+    assert row["output_tokens"] == 5
+    assert row["reported_usd"] == pytest.approx(0.0001)
+    assert row["estimated_usd"] >= 0.0
+
+
+async def test_spawn_subagent_warns_when_run_dir_missing(tmp_path, caplog) -> None:
+    """When a workflow forgets to pass run_dir, sagaflow must surface a
+    WARNING. Previously the silent skip was the tested behaviour; this
+    regression locks in loud-fail observability so the next consumer that
+    forgets run_dir is caught at runtime instead of after months of
+    $0.0000 / 0 steps in `sagaflow cost runs`.
+    """
+    input_path = tmp_path / "in.txt"
+    input_path.write_text("user prompt here", encoding="utf-8")
+    cli_call = AsyncMock(
+        return_value=MagicMock(
+            stdout="ok",
+            input_tokens=1,
+            output_tokens=1,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+            total_cost_usd=0.0,
+        )
+    )
+    fake_cli = MagicMock(call=cli_call)
+    with caplog.at_level("WARNING", logger="sagaflow.durable.activities"):
+        with patch("sagaflow.durable.activities._get_cli", return_value=fake_cli):
+            await spawn_subagent(
+                SpawnSubagentInput(
+                    role="greeter",
+                    tier_name="HAIKU",
+                    system_prompt="be brief",
+                    user_prompt_path=str(input_path),
+                    max_tokens=128,
+                    tools_needed=False,
+                    # NB: run_dir intentionally omitted (defaults to "")
+                )
+            )
+
+    matched = [r for r in caplog.records if "without run_dir" in r.getMessage()]
+    assert matched, "expected WARNING about missing run_dir"
+    assert matched[0].levelname == "WARNING"

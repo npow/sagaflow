@@ -114,6 +114,13 @@ class SkillContext:
                 user_prompt_path=prompt_artifact,
                 max_tokens=max_tokens,
                 tools_needed=False,
+                # Threads the @skill workflow's run_dir into the activity so
+                # spawn_subagent's per-step manifest write and
+                # cost_audit.jsonl write land on disk. Without this, every
+                # @skill-decorated workflow (hello-world, build, gen-smoke,
+                # …) silently disabled cost reporting — `sagaflow cost
+                # runs` showed $0.0000 / 0 steps for every run.
+                run_dir=self.run_dir,
             ),
             start_to_close_timeout=timedelta(seconds=600),
             heartbeat_timeout=timedelta(seconds=120),
