@@ -207,3 +207,82 @@ async def test_empty_content_returns_empty_text_and_no_tool_uses() -> None:
         )
     assert result.text == ""
     assert result.tool_uses == []
+
+
+async def test_call_claude_with_tools_writes_cost_audit_when_run_dir_set(
+    tmp_path, caplog
+) -> None:
+    """call_claude_with_tools must write cost_audit.jsonl + manifest step
+    when run_dir is set. Regression for the bug where the generic
+    interpreter (gen-smoke, hello-world via @skill, build, autopilot, etc.)
+    reported $0.0000 / 0 steps in `sagaflow cost runs` because the activity
+    silently no-op'd every observability sink without inp.run_dir.
+    """
+    import json as _json
+
+    content = [SimpleNamespace(type="text", text="ok")]
+    usage = SimpleNamespace(
+        input_tokens=10,
+        output_tokens=5,
+        cache_creation_input_tokens=100,
+        cache_read_input_tokens=200,
+    )
+    response = SimpleNamespace(content=content, stop_reason="end_turn", usage=usage)
+    create_mock, patcher = _install_fake_client(response)
+    with patcher:
+        result = await call_claude_with_tools(
+            CallClaudeInput(
+                system_prompt="be brief",
+                messages=[{"role": "user", "content": "hi"}],
+                tools=[],
+                tier_name="HAIKU",
+                run_dir=str(tmp_path),
+                role="generic-loop",
+            )
+        )
+
+    # Cache classes propagate to the response.
+    assert result.cache_creation_input_tokens == 100
+    assert result.cache_read_input_tokens == 200
+
+    audit_path = tmp_path / "cost_audit.jsonl"
+    assert audit_path.exists(), "cost_audit.jsonl must be written when run_dir is set"
+    rows = [_json.loads(line) for line in audit_path.read_text().splitlines() if line.strip()]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["role"] == "generic-loop"
+    assert row["tier"] == "HAIKU"
+    assert row["input_tokens"] == 10
+    assert row["output_tokens"] == 5
+    assert row["cache_creation_tokens"] == 100
+    assert row["cache_read_tokens"] == 200
+    assert row["estimated_usd"] >= 0.0
+    # Anthropic SDK does not return total_cost_usd, so reported_usd is 0.0
+    # and the drift comparison is naturally skipped.
+    assert row["reported_usd"] == 0.0
+
+
+async def test_call_claude_with_tools_warns_when_run_dir_missing(caplog) -> None:
+    """When the calling workflow forgets to thread run_dir through, the
+    activity must emit a WARNING — silent skip is the bug we just fixed.
+    Locks in loud-fail observability for the same class of failure that bit
+    the @skill/spawn_subagent path.
+    """
+    content = [SimpleNamespace(type="text", text="ok")]
+    response = _fake_response(content=content, stop_reason="end_turn")
+    _, patcher = _install_fake_client(response)
+    with caplog.at_level("WARNING", logger="sagaflow.generic.activities"):
+        with patcher:
+            await call_claude_with_tools(
+                CallClaudeInput(
+                    system_prompt="be brief",
+                    messages=[{"role": "user", "content": "hi"}],
+                    tools=[],
+                    tier_name="HAIKU",
+                    # NB: run_dir intentionally omitted (defaults to "")
+                )
+            )
+
+    matched = [r for r in caplog.records if "without run_dir" in r.getMessage()]
+    assert matched, "expected WARNING about missing run_dir"
+    assert matched[0].levelname == "WARNING"
