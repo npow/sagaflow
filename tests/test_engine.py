@@ -6,9 +6,16 @@ import pytest
 
 
 def _require_temporal_durable_exec() -> None:
-    """Skip when CI's `pip uninstall temporalio` strips the durable_exec deps."""
-    pytest.importorskip("temporalio")
-    pytest.importorskip("pydantic_ai.durable_exec.temporal")
+    """Skip when CI's `pip uninstall temporalio` strips the durable_exec deps.
+
+    pydantic_ai.durable_exec.temporal's __init__ imports _logfire which raises
+    TypeError (not ModuleNotFoundError) when temporalio is missing, so plain
+    importorskip won't catch it.
+    """
+    try:
+        import pydantic_ai.durable_exec.temporal  # noqa: F401
+    except (ImportError, TypeError) as exc:
+        pytest.skip(f"pydantic-ai temporal durable_exec unavailable: {exc}")
 
 
 def test_get_sdk_agent_returns_temporal_agent():
