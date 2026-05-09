@@ -23,12 +23,8 @@ def test_decorator_attaches_spec_and_register_helper() -> None:
     assert hasattr(hello, "spec"), "decorator should attach .spec"
     assert hasattr(hello, "register"), "decorator should attach .register"
     assert hello.spec.name == "hello-simple"
-    activity_names = {
-        getattr(a, "__temporal_activity_definition", None).name
-        for a in hello.spec.activities
-        if getattr(a, "__temporal_activity_definition", None)
-    }
-    assert {"write_artifact", "emit_finding", "spawn_subagent"}.issubset(activity_names)
+    activity_func_names = {a.__name__ for a in hello.spec.activities}
+    assert {"write_artifact", "emit_finding", "spawn_subagent"}.issubset(activity_func_names)
     opt_names = [name for name, _ in hello.spec.cli_options]
     assert opt_names == ["name"]
     assert hello.spec.cli_options[0][1]["default"] == "world"
