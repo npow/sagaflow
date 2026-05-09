@@ -189,6 +189,29 @@ def _extract_json_object(raw: str) -> dict | None:
         if result:
             return result
 
+    # 3b. Bare KEY|VALUE lines without START/END markers. Models routinely
+    #     emit `DIRECTIONS|[...]` after a prose preamble and forget the
+    #     `STRUCTURED_OUTPUT_START/END` wrappers — without this fallback the
+    #     entire structured payload is silently lost in the RESPONSE field.
+    #     Recognise any line that begins with a SCREAMING_SNAKE key followed
+    #     by `|`, and consume continuation lines until the next such key or
+    #     end of text.
+    bare_keys = list(re.finditer(
+        r"^([A-Z][A-Z0-9_-]*)\|(.*)$",
+        text,
+        re.MULTILINE,
+    ))
+    if bare_keys:
+        result = {}
+        for i, m in enumerate(bare_keys):
+            key = m.group(1)
+            start = m.end(2)  # end of value-on-same-line capture
+            end = bare_keys[i + 1].start() if i + 1 < len(bare_keys) else len(text)
+            value = (m.group(2) + text[start:end]).strip()
+            result[key] = value
+        if result:
+            return result
+
     # 4. Find outermost { ... } and try parsing.
     first_brace = text.find("{")
     last_brace = text.rfind("}")
