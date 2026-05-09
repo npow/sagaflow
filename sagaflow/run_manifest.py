@@ -353,7 +353,7 @@ def cleanup_stale_runs(max_age_hours: float = 1.0) -> int:
             cleaned += 1
             run_id = run_dir.name
             skill = data.get("skill", "unknown")
-            summary = f"stale_cleanup: run was still RUNNING when worker restarted"
+            summary = "stale_cleanup: run was still RUNNING when worker restarted"
             logger.info("cleaned up stale run %s (skill=%s)", run_id, skill)
             try:
                 inbox.append(InboxEntry(

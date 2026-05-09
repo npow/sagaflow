@@ -2,9 +2,24 @@
 
 from __future__ import annotations
 
+import pytest
+
+
+def _require_temporal_durable_exec() -> None:
+    """Skip when CI's `pip uninstall temporalio` strips the durable_exec deps.
+
+    pydantic_ai.durable_exec.temporal's __init__ imports _logfire which raises
+    TypeError (not ModuleNotFoundError) when temporalio is missing, so plain
+    importorskip won't catch it.
+    """
+    try:
+        import pydantic_ai.durable_exec.temporal  # noqa: F401
+    except (ImportError, TypeError) as exc:
+        pytest.skip(f"pydantic-ai temporal durable_exec unavailable: {exc}")
 
 
 def test_get_sdk_agent_returns_temporal_agent():
+    _require_temporal_durable_exec()
     from sagaflow.engine import get_sdk_agent
 
     agent = get_sdk_agent(
@@ -18,6 +33,7 @@ def test_get_sdk_agent_returns_temporal_agent():
 
 
 def test_get_sdk_agent_caches_by_name_and_tier():
+    _require_temporal_durable_exec()
     from sagaflow.engine import get_sdk_agent, _agent_cache
 
     _agent_cache.clear()
@@ -27,6 +43,7 @@ def test_get_sdk_agent_caches_by_name_and_tier():
 
 
 def test_get_sdk_agent_different_tiers_are_different():
+    _require_temporal_durable_exec()
     from sagaflow.engine import get_sdk_agent, _agent_cache
 
     _agent_cache.clear()

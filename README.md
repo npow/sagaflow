@@ -40,23 +40,128 @@ Requirements:
 - [Temporal CLI](https://docs.temporal.io/cli) running locally: `brew install temporal && temporal server start-dev`
 - An Anthropic API key (or a compatible proxy via `ANTHROPIC_BASE_URL`)
 
-## Authoring a workflow
+## Authoring a skill
+
+A skill is a directory under `~/.claude/skills/<skill-name>/` containing three things:
+
+1. **`workflow.py`** — a Temporal workflow class (the durable orchestration)
+2. **`__init__.py`** — a `register()` function that wires the workflow into sagaflow
+3. **`prompts/*.md`** — the system/user prompts the workflow's activities load
+
+Here is the complete `hello-world` skill (the one `sagaflow launch hello-world --name alice` runs).
+
+**`~/.claude/skills/hello-world/workflow.py`** — the durable workflow:
 
 ```python
-from sagaflow import workflow, generate_text, parallel, write_file
+from dataclasses import dataclass
+from datetime import timedelta
 
-@workflow(name="code-review", phases=["Critique", "Synthesize"])
-async def run(diff: str):
-    findings = await parallel(
-        generate_text("security-critic", variables={"diff": diff}),
-        generate_text("perf-critic", variables={"diff": diff}),
+from temporalio import workflow
+
+with workflow.unsafe.imports_passed_through():
+    from sagaflow.durable.activities import (
+        EmitFindingInput, SpawnSubagentInput, WriteArtifactInput,
     )
-    report = await generate_text("synth", variables={"findings": str(findings)})
-    await write_file("report.md", report)
-    return report
+    from sagaflow.durable.retry_policies import HAIKU_POLICY
+
+
+@dataclass(frozen=True)
+class HelloWorldInput:
+    run_id: str
+    name: str
+    inbox_path: str
+    run_dir: str
+    greeter_system_prompt: str
+    greeter_user_prompt: str
+
+
+@workflow.defn(name="HelloWorldWorkflow")
+class HelloWorldWorkflow:
+    @workflow.run
+    async def run(self, inp: HelloWorldInput) -> str:
+        prompt_path = f"{inp.run_dir}/prompt.txt"
+        await workflow.execute_activity(
+            "write_artifact",
+            WriteArtifactInput(path=prompt_path, content=inp.greeter_user_prompt),
+            start_to_close_timeout=timedelta(seconds=10),
+            retry_policy=HAIKU_POLICY,
+        )
+        parsed = await workflow.execute_activity(
+            "spawn_subagent",
+            SpawnSubagentInput(
+                role="greeter", tier_name="HAIKU",
+                system_prompt=inp.greeter_system_prompt,
+                user_prompt_path=prompt_path,
+                max_tokens=64, tools_needed=False,
+            ),
+            start_to_close_timeout=timedelta(seconds=600),
+            heartbeat_timeout=timedelta(seconds=120),
+            retry_policy=HAIKU_POLICY,
+        )
+        greeting = parsed.get("GREETING", "hello")
+        await workflow.execute_activity(
+            "emit_finding",
+            EmitFindingInput(
+                inbox_path=inp.inbox_path, run_id=inp.run_id,
+                skill="hello-world", status="DONE", summary=greeting,
+                timestamp_iso=workflow.now().isoformat(timespec="seconds"),
+            ),
+            start_to_close_timeout=timedelta(seconds=10),
+            retry_policy=HAIKU_POLICY,
+        )
+        return greeting
 ```
 
-Prompts live in `prompts/<name>.prompt` next to the workflow file. Each `generate_text` and `write_file` call is a Temporal activity with its own retry policy and replay log.
+Each `execute_activity` call is a checkpoint. If the worker dies between them, replay resumes from the last completed one.
+
+**`~/.claude/skills/hello-world/__init__.py`** — registration:
+
+```python
+from typing import Any
+
+from sagaflow.durable.activities import emit_finding, spawn_subagent, write_artifact
+from sagaflow.prompts import load_prompt
+from sagaflow.registry import SkillRegistry, SkillSpec
+
+from skills.hello_world.workflow import HelloWorldInput, HelloWorldWorkflow
+
+
+def _build_input(*, run_id, run_dir, inbox_path, cli_args: dict[str, Any]) -> HelloWorldInput:
+    name = str(cli_args.get("name", "world"))
+    return HelloWorldInput(
+        run_id=run_id, name=name,
+        inbox_path=inbox_path, run_dir=run_dir,
+        greeter_system_prompt=load_prompt(__file__, "greeter.system"),
+        greeter_user_prompt=load_prompt(__file__, "greeter.user", substitutions={"name": name}),
+    )
+
+
+def register(registry: SkillRegistry) -> None:
+    registry.register(SkillSpec(
+        name="hello-world",
+        workflow_cls=HelloWorldWorkflow,
+        activities=[write_artifact, emit_finding, spawn_subagent],
+        build_input=_build_input,
+    ))
+```
+
+`register()` is what the worker calls at startup to discover the skill. `_build_input` translates CLI args (`--name alice`) into the workflow's input dataclass and loads prompts from disk.
+
+**`~/.claude/skills/hello-world/prompts/greeter.system.md`**:
+
+```
+You are a greeter. Output a greeting using the format
+STRUCTURED_OUTPUT_START / GREETING|<text> / STRUCTURED_OUTPUT_END.
+Do not include any other text.
+```
+
+**`~/.claude/skills/hello-world/prompts/greeter.user.md`**:
+
+```
+Greet $name
+```
+
+That's the whole skill. `sagaflow launch hello-world --name alice` finds the registration, builds the input, hands the workflow to Temporal, and the worker runs it durably.
 
 ## CLI
 

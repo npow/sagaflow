@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import types
+from contextlib import suppress as _suppress
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -479,9 +480,6 @@ def build_mission_activities() -> list:
     except ImportError:
         pass
     return activities
-
-
-from contextlib import suppress as _suppress
 
 
 _TERMINAL_STATUSES = frozenset({

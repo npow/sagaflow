@@ -11,12 +11,13 @@ from __future__ import annotations
 import hashlib
 import logging
 from datetime import timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 from pydantic_ai import Agent
-from pydantic_ai.durable_exec.temporal import TemporalAgent
-from temporalio.workflow import ActivityConfig
+
+if TYPE_CHECKING:
+    from pydantic_ai.durable_exec.temporal import TemporalAgent
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,9 @@ def get_sdk_agent(
     key = _cache_key(name, tier, system_prompt)
     if key in _agent_cache:
         return _agent_cache[key]
+
+    from pydantic_ai.durable_exec.temporal import TemporalAgent
+    from temporalio.workflow import ActivityConfig
 
     model = TIER_TO_MODEL.get(tier, TIER_TO_MODEL["SONNET"])
     agent = Agent(
