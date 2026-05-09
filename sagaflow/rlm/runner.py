@@ -4,12 +4,12 @@ The LLM writes Python code to explore research data through tools. Tool results
 stay in the sandbox (never entering the LLM's context). Sub-LLM calls use Haiku.
 
 Usage as CLI:
-    python -m sagaflow.rlm.runner --query "How does Temporal work at Netflix?" \
-        --run-dir /tmp/rlm-test --verbose
+    RLM_API_BASE=http://localhost:8080/v1 python -m sagaflow.rlm.runner \
+        --query "How does X work?" --run-dir /tmp/rlm-test --verbose
 
 Usage as library:
     from sagaflow.rlm.runner import run_research
-    result = run_research("How does Temporal work at Netflix?", run_dir="/tmp/rlm-test")
+    result = run_research("How does X work?", run_dir="/tmp/rlm-test")
 """
 
 from __future__ import annotations
@@ -20,15 +20,13 @@ import logging
 import os
 import sys
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-MGP_BASE = os.environ.get(
-    "MGP_BASE_URL", "http://mgp.local.dev.netflix.net:9123/proxy/npowws/v1"
-)
-MGP_KEY = os.environ.get("MGP_API_KEY", "sk-dummy")
+MGP_BASE = os.environ.get("RLM_API_BASE")
+MGP_KEY = os.environ.get("RLM_API_KEY", "sk-dummy")
 
 MAIN_MODEL = os.environ.get("RLM_MAIN_MODEL", "openai/claude-sonnet-4-6")
 SUB_MODEL = os.environ.get("RLM_SUB_MODEL", "openai/claude-haiku-4-5")
@@ -82,32 +80,38 @@ def run_research(
     """
     import dspy
 
-    from sagaflow.rlm.tools import ALL_TOOLS
+    from sagaflow.rlm.tools import discover_tools
 
     _ensure_deno_on_path()
 
     main_m = main_model or MAIN_MODEL
     sub_m = sub_model or SUB_MODEL
 
+    if not MGP_BASE:
+        raise ValueError(
+            "RLM_API_BASE environment variable is required. "
+            "Set it to your OpenAI-compatible API base URL."
+        )
+
     main_lm = dspy.LM(main_m, api_base=MGP_BASE, api_key=MGP_KEY)
     sub_lm = dspy.LM(sub_m, api_base=MGP_BASE, api_key=MGP_KEY)
     dspy.configure(lm=main_lm)
 
-    research_tools = tools if tools is not None else ALL_TOOLS
+    research_tools = tools if tools is not None else discover_tools()
 
+    tool_names = [t.__name__ for t in research_tools]
     system_instructions = (
-        "You are a research agent with access to Netflix's codebase (search_codebase), "
-        "internal documentation (search_docs), Slack history (search_slack), and local "
-        "files (read_file). You also have llm_query() for semantic analysis.\n\n"
+        f"You are a research agent with access to these tools: {', '.join(tool_names)}. "
+        "You also have llm_query() for semantic analysis.\n\n"
         "APPROACH:\n"
         "1. Break the research query into sub-questions\n"
         "2. Use the search tools to gather relevant data\n"
-        "3. Use llm_query() with Haiku for extracting specific facts from large results\n"
+        "3. Use llm_query() for extracting specific facts from large results\n"
         "4. Synthesize findings across sources\n"
         "5. SUBMIT your findings as a structured markdown report\n\n"
         "IMPORTANT:\n"
         "- Each tool returns a string. Store results in variables and process them.\n"
-        "- Use llm_query(prompt) for any semantic extraction — it's cheap (Haiku).\n"
+        "- Use llm_query(prompt) for any semantic extraction — it's cheap.\n"
         "- Be thorough: search multiple sources, cross-reference findings.\n"
         "- SUBMIT when you have a comprehensive answer, don't over-iterate.\n"
     )

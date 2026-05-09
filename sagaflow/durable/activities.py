@@ -100,6 +100,7 @@ class SpawnSubagentInput:
     # file-read pair across activities, which is fragile in multi-host
     # deployments where filesystem isn't shared.
     user_prompt: str | None = None
+    enable_working_memory: bool = False
 
 
 _cli_singleton: ClaudeCliTransport | None = None
@@ -309,8 +310,21 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
             effective_mcp_config = str(_fallback)
             logger.info("No MCP config specified; using fallback minimal config: %s", _fallback)
 
+    if inp.enable_working_memory and inp.run_dir:
+        from sagaflow.memory.config import build_mcp_config_with_memory
+        effective_mcp_config = str(build_mcp_config_with_memory(
+            inp.run_dir,
+            agent_role=inp.role,
+            base_config_path=effective_mcp_config,
+        ))
+
     # --- CLI dispatch ---
-    combined_prompt = f"{inp.system_prompt}\n\n---\n\n{user_prompt}"
+    effective_system = inp.system_prompt
+    if inp.enable_working_memory:
+        from sagaflow.memory.prompt_fragment import with_working_memory
+        effective_system = with_working_memory(effective_system)
+
+    combined_prompt = f"{effective_system}\n\n---\n\n{user_prompt}"
     if inp.output_schema:
         import json as _json
         combined_prompt += (

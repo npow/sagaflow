@@ -74,6 +74,7 @@ async def spawn(
     timeout: timedelta = _DEFAULT_SPAWN_TIMEOUT,
     heartbeat: timedelta | None = None,
     retry: RetryPolicy | None = None,
+    enable_working_memory: bool = False,
 ) -> dict[str, str]:
     """Dispatch a subagent and return its parsed structured output."""
     kwargs: dict[str, Any] = {
@@ -96,6 +97,7 @@ async def spawn(
             step_index=step_index,
             mcp_config_path=mcp_config_path,
             cli_timeout_seconds=cli_timeout_seconds,
+            enable_working_memory=enable_working_memory,
         ),
         **kwargs,
     )

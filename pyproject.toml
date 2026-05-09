@@ -59,6 +59,12 @@ Issues = "https://github.com/npow/sagaflow/issues"
 [project.scripts]
 sagaflow = "sagaflow.cli:main"
 
+# RLM tool plugins register under this group.
+# Example entry in a plugin's pyproject.toml:
+#   [project.entry-points."sagaflow.rlm.tools"]
+#   my_tools = "my_package.rlm_tools:TOOLS"
+# where TOOLS is a list of callables, or each entry is a single callable.
+
 [tool.hatch.build.targets.wheel]
 packages = ["sagaflow", "skills"]
 
