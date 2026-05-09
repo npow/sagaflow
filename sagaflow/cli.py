@@ -554,6 +554,103 @@ def _probe_sandbox_lint() -> tuple[str, str | None]:
     return ("OK", "no sandbox violations found")
 
 
+def _probe_payload_safety() -> tuple[str, str | None]:
+    """Static scan: every `@activity.defn` whose return contains text fields
+    should also use `@sagaflow_activity` (or call `spill_large_values`
+    explicitly). This is a fence against re-introducing TMPRL1103."""
+    import ast
+    from pathlib import Path
+
+    targets: list[Path] = []
+    sagaflow_dir = Path(__file__).resolve().parent
+    targets.extend(sagaflow_dir.glob("**/activities*.py"))
+    public_skills = Path.home() / ".claude" / "public-skills"
+    if public_skills.is_dir():
+        targets.extend(public_skills.glob("*/activities.py"))
+
+    violations: list[str] = []
+    for path in targets:
+        if "_pycache__" in str(path) or ".bak." in str(path):
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except (SyntaxError, OSError):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.AsyncFunctionDef):
+                continue
+            decorator_names: list[str] = []
+            for d in node.decorator_list:
+                if isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute):
+                    decorator_names.append(f"{getattr(d.func.value, 'id', '?')}.{d.func.attr}")
+                elif isinstance(d, ast.Call) and isinstance(d.func, ast.Name):
+                    decorator_names.append(d.func.id)
+                elif isinstance(d, ast.Attribute):
+                    decorator_names.append(f"{getattr(d.value, 'id', '?')}.{d.attr}")
+                elif isinstance(d, ast.Name):
+                    decorator_names.append(d.id)
+            uses_activity_defn = any("activity.defn" in n for n in decorator_names)
+            uses_sagaflow_wrapper = any("sagaflow_activity" in n for n in decorator_names)
+            if not uses_activity_defn or uses_sagaflow_wrapper:
+                continue
+            # Treat explicit calls to spill_large_values() or _truncate_to_cap()
+            # inside the function as "self-protected" — author has applied the
+            # contract by hand. Same with explicit max_tokens caps on
+            # AsyncAnthropic.messages.create.
+            self_protected = False
+            for child in ast.walk(node):
+                if not isinstance(child, ast.Call):
+                    continue
+                callee_name = ""
+                if isinstance(child.func, ast.Name):
+                    callee_name = child.func.id
+                elif isinstance(child.func, ast.Attribute):
+                    callee_name = child.func.attr
+                if callee_name in {
+                    "spill_large_values",
+                    "_truncate_to_cap",
+                    "validate_text_boundary",
+                }:
+                    self_protected = True
+                    break
+            if self_protected:
+                continue
+            risky = False
+            for child in ast.walk(node):
+                if not isinstance(child, ast.Return) or child.value is None:
+                    continue
+                if isinstance(child.value, ast.Dict):
+                    for k in child.value.keys:
+                        if isinstance(k, ast.Constant) and isinstance(k.value, str):
+                            if k.value in {
+                                "RESPONSE", "_raw", "FINDINGS", "stdout", "stderr",
+                                "content", "text", "OUTPUT", "RESULT",
+                                "report", "REPORT", "summary", "SUMMARY",
+                            }:
+                                risky = True
+                if isinstance(child.value, ast.Call) and isinstance(child.value.func, ast.Name):
+                    if child.value.func.id in {
+                        "BashResult", "ReadFileResult", "ClaudeResponse",
+                    }:
+                        risky = True
+            if risky:
+                violations.append(
+                    f"{path}:{node.lineno} {node.name} uses @activity.defn "
+                    f"directly and returns text-heavy data"
+                )
+
+    if violations:
+        head = "; ".join(violations[:3])
+        more = f"; ... +{len(violations)-3} more" if len(violations) > 3 else ""
+        # FAIL not WARN: zero opt-outs exist in the tree, so there's no
+        # legitimate reason for a new violation to slip in. New unwrapped
+        # text-returning activities must be migrated to @sagaflow_activity
+        # or call spill_large_values()/_truncate_to_cap() explicitly before
+        # `sagaflow doctor` will pass.
+        return ("FAIL", f"{len(violations)} unwrapped: {head}{more}")
+    return ("OK", "every text-returning activity is claim-check protected")
+
+
 def _probe_stale_runs() -> tuple[str, str | None]:
     """Detect runs that are RUNNING but whose progress.json hasn't been
     touched in a while, AND surface payload-size warnings from worker.log.
@@ -633,6 +730,7 @@ def doctor() -> None:
         ("hook", _probe_hook),
         ("skill-imports", _probe_skill_imports),
         ("sandbox-lint", _probe_sandbox_lint),
+        ("payload-safety", _probe_payload_safety),
         ("stale-runs", _probe_stale_runs),
     ]
     any_fail = False

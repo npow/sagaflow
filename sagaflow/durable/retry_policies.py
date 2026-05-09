@@ -13,6 +13,15 @@ NON_RETRYABLE_ERRORS: list[str] = [
     "InvalidInputError",
     "MalformedResponseError",
     "AbortRequestedError",
+    # Temporal payload-size violations are deterministic — retrying never
+    # helps. The Temporal SDK raises these as the activity input/output
+    # crosses the 2MB grpc cap (TMPRL1103). Without this entry, the worker
+    # retries up to maximum_attempts × cli_timeout_seconds (4 × 1h = 4h)
+    # before giving up — which is the failure mode that left the
+    # deep-research run silently wedged for hours.
+    "PayloadTooLargeError",
+    "WorkflowPayloadSizeError",
+    "PayloadSizeError",
 ]
 
 

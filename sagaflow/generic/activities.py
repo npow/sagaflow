@@ -34,10 +34,34 @@ _READ_FILE_DEFAULT_MAX_BYTES = 1_048_576  # 1 MiB
 _READ_FILE_HARD_MAX_BYTES = 16 * 1_048_576  # 16 MiB
 _BASH_DEFAULT_TIMEOUT_SECONDS = 60
 _BASH_MAX_TIMEOUT_SECONDS = 600
+# Hard caps on subprocess output so a `find /` or large log dump can't blow
+# Temporal's 2MB workflow event cap. The activity result is the workflow's
+# input on the next turn, so stdout/stderr must each fit comfortably under
+# the event ceiling. Excess is truncated; the trailing marker tells Claude
+# what happened so it can re-run with a narrower command.
+_BASH_STDOUT_HARD_CAP_BYTES = 256 * 1024   # 256 KiB
+_BASH_STDERR_HARD_CAP_BYTES = 64 * 1024    # 64 KiB
 _GREP_DEFAULT_MAX_RESULTS = 200
 _GREP_HARD_MAX_RESULTS = 2000
 _GLOB_DEFAULT_MAX_RESULTS = 500
 _GLOB_HARD_MAX_RESULTS = 5000
+
+
+def _truncate_to_cap(text: str, cap_bytes: int, label: str) -> tuple[str, bool]:
+    """Truncate `text` so its UTF-8 encoding fits in `cap_bytes`. Returns the
+    possibly-truncated string and a flag. Adds a marker line on truncation so
+    the LLM can see what happened and adjust."""
+    if not text:
+        return text, False
+    encoded = text.encode("utf-8", errors="replace")
+    if len(encoded) <= cap_bytes:
+        return text, False
+    head = encoded[:cap_bytes].decode("utf-8", errors="replace")
+    return (
+        head
+        + f"\n\n... [{label} truncated: {len(encoded)} bytes total, "
+        f"{len(encoded) - cap_bytes} bytes dropped]"
+    ), True
 
 
 @dataclass(frozen=True)
@@ -143,6 +167,10 @@ async def call_claude_with_tools(inp: CallClaudeInput) -> ClaudeResponse:
                 await beat_task
 
     text, tool_uses = _extract_content(response)
+    # Hard-cap the text return so a runaway LLM response (or many small text
+    # blocks summing large) can't blow the workflow event payload. 256KB is
+    # ~16× max_tokens=4096 worth of latin-1 text — well past anything legit.
+    text, _ = _truncate_to_cap(text, 256 * 1024, "claude_response.text")
     usage = getattr(response, "usage", None)
     return ClaudeResponse(
         text=text,
@@ -237,6 +265,13 @@ async def read_file_tool(inp: ReadFileInput) -> ReadFileResult:
         if truncated:
             raw = raw[:cap]
         text = raw.decode("utf-8", errors="replace")
+        # Workflow-event safety cap: read_file_tool's 1MB cap protects the
+        # process but a single tool_result of 1MB still adds 1MB to the next
+        # workflow event. Cap further (256KB) for the workflow boundary; the
+        # LLM reads the tail in subsequent calls if it needs more.
+        text, capped = _truncate_to_cap(text, 256 * 1024, "read_file.content")
+        if capped:
+            truncated = True
         return ReadFileResult(
             path=str(resolved),
             content=text,
@@ -288,9 +323,15 @@ async def bash_tool(inp: BashInput) -> BashResult:
                     text=True,
                     timeout=timeout,
                 )
+                stdout_capped, _ = _truncate_to_cap(
+                    completed.stdout, _BASH_STDOUT_HARD_CAP_BYTES, "stdout",
+                )
+                stderr_capped, _ = _truncate_to_cap(
+                    completed.stderr, _BASH_STDERR_HARD_CAP_BYTES, "stderr",
+                )
                 return BashResult(
-                    stdout=completed.stdout,
-                    stderr=completed.stderr,
+                    stdout=stdout_capped,
+                    stderr=stderr_capped,
                     exit_code=int(completed.returncode),
                     timed_out=False,
                     command=inp.command,
@@ -307,6 +348,12 @@ async def bash_tool(inp: BashInput) -> BashResult:
                     stderr = stderr_data.decode("utf-8", errors="replace")
                 else:
                     stderr = stderr_data or ""
+                stdout, _ = _truncate_to_cap(
+                    stdout, _BASH_STDOUT_HARD_CAP_BYTES, "stdout",
+                )
+                stderr, _ = _truncate_to_cap(
+                    stderr, _BASH_STDERR_HARD_CAP_BYTES, "stderr",
+                )
                 return BashResult(
                     stdout=stdout,
                     stderr=stderr,

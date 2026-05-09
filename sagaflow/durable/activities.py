@@ -12,6 +12,7 @@ from pathlib import Path
 
 from temporalio import activity
 
+from sagaflow.durable.claim_check import spill_large_values
 from sagaflow.inbox import Inbox, InboxEntry
 from sagaflow.notify import notify_desktop
 from sagaflow.transport.boundary import validate_boundary, validate_text_boundary
@@ -386,6 +387,7 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
                 logger.error("TRUNCATED fields in %s: %s", label, br.truncated_fields)
             parsed.update(_token_meta)
             _record_cassette(parsed)
+            parsed = spill_large_values(parsed, run_dir=inp.run_dir, activity_label=label)
             return parsed
         logger.warning(
             "Schema-constrained response not valid JSON after extraction attempts "
@@ -410,6 +412,7 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
             logger.error("TRUNCATED fields in %s: %s", label, br.truncated_fields)
         structured.update(_token_meta)
         _record_cassette(structured)
+        structured = spill_large_values(structured, run_dir=inp.run_dir, activity_label=label)
         return structured
 
     result = {"RESPONSE": raw or ""}
@@ -419,6 +422,7 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
         logger.error("TRUNCATED fields in %s: %s", label, br.truncated_fields)
     result.update(_token_meta)
     _record_cassette(result)
+    result = spill_large_values(result, run_dir=inp.run_dir, activity_label=label)
     return result
 
 
