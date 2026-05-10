@@ -191,8 +191,8 @@ def _format_cost_drift_warnings() -> str:
         if not flagged:
             return ""
         out = ["Cost-estimate drift detected (run `sagaflow cost audit <run_id>` for detail):"]
-        for run_id, d, rep in sorted(flagged, key=lambda x: -abs(x[1]))[:10]:
-            out.append(f"  - {run_id}: drift {d*100:+.0f}% (reported $${rep:.2f})")
+        for run_id, drift, rep in sorted(flagged, key=lambda x: -abs(x[1]))[:10]:
+            out.append(f"  - {run_id}: drift {drift*100:+.0f}% (reported $${rep:.2f})")
         return "\n".join(out)
     except Exception:
         return ""

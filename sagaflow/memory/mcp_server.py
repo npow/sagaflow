@@ -16,8 +16,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import sys
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +23,6 @@ logger = logging.getLogger(__name__)
 def _build_server(run_dir: str, agent_role: str = "unknown"):
     try:
         from mcp.server import Server
-        from mcp.server.stdio import stdio_server
         from mcp.types import TextContent, Tool
     except ImportError:
         logger.error("mcp package not installed — pip install mcp")

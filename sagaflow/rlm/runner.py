@@ -100,7 +100,10 @@ def run_research(
     research_tools = tools if tools is not None else discover_tools()
 
     tool_names = [t.__name__ for t in research_tools]
-    system_instructions = (
+    # TODO: this prompt is built but not plumbed into dspy.RLM below — wire it
+    # in as `instructions=` (or via a Signature subclass with a docstring) once
+    # the upstream dspy.RLM API for system instructions is confirmed.
+    _system_instructions = (
         f"You are a research agent with access to these tools: {', '.join(tool_names)}. "
         "You also have llm_query() for semantic analysis.\n\n"
         "APPROACH — BREADTH FIRST, THEN DEPTH:\n"
@@ -130,7 +133,7 @@ def run_research(
     )
 
     rlm = dspy.RLM(
-        f"query: str -> findings: str",
+        "query: str -> findings: str",
         max_iterations=max_iterations,
         max_llm_calls=max_llm_calls,
         verbose=verbose,
