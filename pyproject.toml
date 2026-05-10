@@ -91,6 +91,7 @@ module = [
     "sagaflow.memory.*",
     "sagaflow.portfolio.*",
     "sagaflow.replay.*",
+    "sagaflow.rlm.*",
     "sagaflow.transport.*",
 ]
 ignore_errors = true

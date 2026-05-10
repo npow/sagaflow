@@ -8,6 +8,8 @@ and is excluded from CI), so this file stays unit-level for fast CI.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from sagaflow import skill
@@ -77,6 +79,15 @@ def test_workflow_run_has_input_class_annotation() -> None:
     assert {"run_id", "run_dir", "inbox_path", "name"}.issubset(field_names)
 
 
+@pytest.mark.skipif(
+    os.environ.get("CI") == "true",
+    reason=(
+        "tests/conftest.py replaces temporalio with a _Noop stub in CI to keep "
+        "tokio threads from being killed mid-job. The stubbed payload_converter "
+        "can't actually round-trip data — see the real-temporalio variant in "
+        "the e2e suite (tests/skills/, excluded from CI)."
+    ),
+)
 def test_input_class_roundtrips_through_temporal_payload_converter() -> None:
     """Catches the same class of failure as above but at one layer deeper:
     even if the annotation is set, Temporal must be able to serialize the

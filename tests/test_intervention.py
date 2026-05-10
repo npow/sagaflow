@@ -70,6 +70,10 @@ class TestInterventionCLI:
         handle = MagicMock()
         handle.signal = AsyncMock()
         handle.query = AsyncMock(return_value={"intervention_state": "RUNNING"})
+        # The abort command (704e559) does signal + terminate by default; the
+        # other intervention commands don't call terminate, but mocking it is
+        # harmless.
+        handle.terminate = AsyncMock()
         return handle
 
     def _patch_connect(self, handle: MagicMock):
@@ -141,17 +145,21 @@ class TestInterventionCLI:
         runner = CliRunner()
         with self._patch_connect(handle):
             result = runner.invoke(main, ["abort", "my-run", "--reason", "bad output"])
-        assert result.exit_code == 0
-        assert "abort signal sent" in result.output
+        assert result.exit_code == 0, result.output
+        # Default abort behavior (704e559): signal + force-terminate.
+        assert "signal sent" in result.output
+        assert "terminated" in result.output
         handle.signal.assert_called_once_with("abort", "bad output")
+        handle.terminate.assert_called_once()
 
     def test_abort_default_reason(self) -> None:
         handle = self._mock_handle()
         runner = CliRunner()
         with self._patch_connect(handle):
             result = runner.invoke(main, ["abort", "my-run"])
-        assert result.exit_code == 0
+        assert result.exit_code == 0, result.output
         handle.signal.assert_called_once_with("abort", "user-abort")
+        handle.terminate.assert_called_once()
 
     def test_conversation_command(self) -> None:
         handle = self._mock_handle()
