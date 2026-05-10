@@ -29,7 +29,12 @@ if os.environ.get("CI"):
             for k, v in kw.items():
                 setattr(self, k, v)
 
-        def __call__(self, fn: object = None, **kw: object) -> object:  # type: ignore[assignment]
+        def __call__(self, *args: object, **kw: object) -> object:  # type: ignore[assignment]
+            # Accept *args so the stub doesn't reject calls like
+            # `payload_converter.from_payloads(payloads, [inp_type])` which
+            # use multiple positional arguments. Behavior is unchanged for the
+            # decorator/factory case (single callable as `args[0]`).
+            fn = args[0] if args else None
             if fn is not None and callable(fn):
                 defn = _Noop(**{**vars(self), **kw})
                 fn.__temporal_activity_definition = defn  # type: ignore[attr-defined]

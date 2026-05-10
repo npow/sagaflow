@@ -27,4 +27,6 @@ async def test_preflight_succeeds_against_running_server() -> None:
 def test_constants_hold_expected_defaults() -> None:
     assert DEFAULT_TARGET == "localhost:7233"
     assert DEFAULT_NAMESPACE == "default"
-    assert TASK_QUEUE == "sagaflow"
+    # TASK_QUEUE is host-scoped (sagaflow-<machine-id or hostname>) to prevent
+    # cross-host filesystem races. SAGAFLOW_TEMPORAL_TASK_QUEUE overrides.
+    assert TASK_QUEUE.startswith("sagaflow")
