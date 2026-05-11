@@ -126,7 +126,7 @@ async def run(task: str, max_rounds: int = 3):
 ```yaml
 ---
 tier: HAIKU
-max_tokens: 8192
+max_tokens: 64000
 ---
 <system>
 You are a security reviewer. Find vulnerabilities, injection risks,
