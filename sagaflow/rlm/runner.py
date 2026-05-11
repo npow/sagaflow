@@ -128,7 +128,7 @@ SEARCH STRATEGY — FAN OUT WIDE, EVEN ON ONE DIMENSION:
 - Cross-reference: if docs mention teams/services, search for those by name.
 - TOOL FLOORS (per dimension — these are LOWER bounds, not targets):
   * ≥4 search_codebase calls — returns file URLs and repo paths.
-  * ≥3 search_docs calls    — returns manuals URLs + Owner emails.
+  * ≥3 search_docs calls    — returns internal-docs URLs + Owner emails.
   * ≥2 search_slack calls   — returns Slack channel IDs + permalinks.
   Code search is load-bearing: every repo path and code-search URL in the
   final synthesis comes from your search_codebase output. The natural bias
@@ -141,15 +141,14 @@ numbers as "many", "high", "fast", "significant". The LM's default behavior
 is to paraphrase — you must override it.
 
 When a tool result contains ANY of:
-  - dollar amount: `$95M`, `$224M`, `~$40M/yr`, `$22-41M`
-  - percentage / ratio: `74%`, `+89% YoY`, `1,925% lift`, `2.4x`
-  - count: `100K users`, `20,000 QPS`, `2,200 A100 80GB`, `1,400 H200`,
-    `3,180 employees`, `2,330 patents`, `260+ projects`, `17 ML Engineers`
-  - throughput / size: `7B tokens`, `8.3M GPU-hr/yr`, `15M`, `1B Claude tokens`,
-    `60% margin`, `~$0.05 to $0.50+ per invocation`
-  - dated milestone: `Como Rex Alpha launched March 13, 2025`,
-    `Cursor went GA August 18, 2025 (~17,000 seats)`,
-    `October 2025 AWS outage`
+  - dollar amount: `$<N>M`, `$<N>K`, `~$<N>/<unit>`, `$<N>-<M>` range
+  - percentage / ratio: `<N>%`, `+<N>% YoY`, `<N>% lift`, `<N>x`
+  - count of entities: `<N> users`, `<N> QPS`, `<N> <hardware-class>`,
+    `<N> employees`, `<N> patents`, `<N> projects`, `<N> <role>`
+  - throughput / size: `<N>B tokens`, `<N>M <unit>-hr/yr`, `<N>% margin`,
+    `~$<N> to $<M>+ per <unit>`
+  - dated milestone: `<entity> launched <date>`, `<entity> went GA <date>`,
+    `<date> incident / outage / release`
 
 paste the EXACT number with its surrounding 1-line context VERBATIM into
 your findings narrative. Do not summarize, do not round, do not say
@@ -159,16 +158,18 @@ single biggest defect in agent-authored research. If a tool call surfaces
 a number you don't use in the narrative, you have either (a) wasted the
 tool call or (b) lost a key claim.
 
-Worked example:
-  Tool result:    "AIP 2026 GenAI investment is $224M (+89% YoY from $118M).
-                   AIP GPU budget is $95M (+150% YoY)."
-  WRONG findings: "AIP's GenAI investment has grown significantly YoY."
-  RIGHT findings: "AIP's 2026 GenAI investment is $224M (+89% YoY from $118M);
-                   AIP GPU budget is $95M (+150% YoY) [source: <doc URL>]."
+Worked example (subject and entity names are placeholders):
+  Tool result:    "<SUBJECT> 2026 investment is $<X>M (+<Y>% YoY from $<Z>M).
+                   <SUBJECT> compute budget is $<W>M (+<V>% YoY)."
+  WRONG findings: "<SUBJECT>'s investment has grown significantly YoY."
+  RIGHT findings: "<SUBJECT>'s 2026 investment is $<X>M (+<Y>% YoY from
+                   $<Z>M); <SUBJECT> compute budget is $<W>M (+<V>% YoY)
+                   [source: <doc URL>]."
 
-This applies to ALL dimensions, not just cost-economics — every dim runner
-should capture numbers verbatim when they appear. The synthesis layer
-cannot recover a number that was paraphrased away at the runner layer.
+This applies to ALL dimensions, not just cost or economics ones — every
+dim runner should capture numbers verbatim when they appear. The synthesis
+layer cannot recover a number that was paraphrased away at the runner
+layer.
 
 BREADTH-VIA-GRAPH-TRAVERSAL (load-bearing whenever the dimension involves
 adoption, ownership, integrations, consumers, teams, or any "who uses X /
@@ -271,7 +272,7 @@ The synthesis layer downstream is REGEX-extracting URLs and emails from your
      `[`<short-label>`](<full-url>)`. Do not summarize, do not pick a
      "representative subset" — paste them all.
   2. After EVERY search_docs call, scan the result for `Source:` and `Owner:`
-     lines. **Paste every manuals URL** into findings as
+     lines. **Paste every internal-docs URL** into findings as
      `[<title>](<url>)`. **Paste every Owner email** as
      `[<team-name>](mailto:<team>@<email-domain>)`.
   3. After EVERY search_slack call, scan for `Slack channel: C0XXXXXXXX` and
@@ -318,13 +319,13 @@ limitation in findings rather than presenting a weak source as authoritative.
 
   STRONG (preferred):
   - Implementation code (code-search URL to a specific file at a specific line)
-  - Versioned runbooks (`runbook.md` under a published manuals path)
+  - Versioned runbooks (`runbook.md` under a published internal-docs path)
   - Official policy documentation (paved-road manual entries, RFCs, ADRs)
   - Postmortems with Jira ticket IDs
   - Versioned schema/protobuf files when claims describe schema, NOT runtime
 
   MEDIUM:
-  - Architecture docs in manuals (cite with last-updated date when available)
+  - Architecture docs in internal docs (cite with last-updated date when available)
   - Slack messages WITH permalinks AND a quoted excerpt
   - Gating docs / design proposals
 

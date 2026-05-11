@@ -238,14 +238,16 @@ REQUIRED cross-cutting dimensions — include at least ONE direction for EACH:
 - ADJACENT-EFFORTS — overlapping/competing/coexisting systems and their boundaries
 - STRATEGIC-TIMING — decisions accelerating/blocking adoption right now
 - ACTUAL-USAGE — production traffic; active workers; dormant vs alive
-- COST-ECONOMICS — annual spend, $/unit, GPU/compute cost, fleet utilization,
+- COST-ECONOMICS — annual spend, $/unit, compute cost, fleet utilization,
   waste, savings opportunities; search internal cost dashboards, budget docs,
-  SLT review decks. Without this dim the report skips quantitative cost claims
-  that are usually the load-bearing argument for any infra investment proposal.
-- INDUSTRY-CONTEXT — public/external comparisons: how peers at FAANG/big-tech
-  approach the same problem; what open-source projects exist; canonical
-  benchmarks. Skip ONLY if the question is strictly tenant-internal with no
-  externally-comparable shape.
+  and leadership review materials. Without this dim the report skips
+  quantitative cost claims that are usually the load-bearing argument for any
+  infra investment proposal.
+- INDUSTRY-CONTEXT — public/external comparisons: how peers (other large
+  industry players, hyperscalers, open-source projects) approach the same
+  problem; what canonical benchmarks, papers, or vendor announcements set the
+  comparison baseline. Skip ONLY if the question is strictly tenant-internal
+  with no externally-comparable shape.
 
 BALANCE: distribute directions evenly. No single dimension > {per_dim_cap} directions.
 
@@ -351,15 +353,15 @@ RULES:
         ),
         "COST-ECONOMICS": (
             "Annual or monthly spend per subsystem; $/unit unit costs; "
-            "GPU/CPU/compute fleet utilization rates; identified waste; "
-            "savings opportunities. Search internal cost dashboards, "
-            "FinOps tooling, budget docs, and SLT review decks."
+            "compute fleet utilization rates; identified waste; savings "
+            "opportunities. Search internal cost dashboards, cost-attribution "
+            "tooling, budget documents, and leadership review materials."
         ),
         "INDUSTRY-CONTEXT": (
-            "How do peers (FAANG, hyperscalers, open-source projects, "
-            "vendors) approach the same problem? What public benchmarks, "
-            "papers, or announcements set the comparison baseline? Use "
-            "web_search for external sources."
+            "How do peers (other large industry players, hyperscalers, "
+            "open-source projects, vendors) approach the same problem? What "
+            "public benchmarks, papers, or announcements set the comparison "
+            "baseline? Use web_search for external sources."
         ),
     }
 
@@ -842,11 +844,11 @@ def _build_merged_quant_roster(results: list["DimensionResult"]) -> str:
     verbatim) so synth has a single ground-truth roster of every
     quantitative claim the research surfaced.
 
-    Why this exists: benchmark of R1 v2 showed pool had 67 distinct
-    numbers but final report had 11 — synth dropped 83% of pool numbers
-    because Haiku's per-dim digest paraphrases them away ("approximately
-    100K users" -> "many users"). Pre-rendering the roster forces synth
-    to thread these numbers into the report's narrative.
+    Why this exists: benchmarks show pools commonly hold 60-100 distinct
+    numbers while final reports cite under 15 — synth drops 80%+ of pool
+    numbers because Haiku's per-dim digest paraphrases them away
+    ("approximately <N> users" -> "many users"). Pre-rendering the roster
+    forces synth to thread these numbers into the report's narrative.
     """
     import re as _re
 
@@ -873,8 +875,8 @@ def _build_merged_quant_roster(results: list["DimensionResult"]) -> str:
             if not val:
                 continue
             # 200 chars before, 100 after — enough to capture the unit
-            # ("$95M GPU budget"), the actor ("AIP under Sura Elamurugu"),
-            # and the time qualifier ("2026 budget").
+            # ("$<N>M compute budget"), the actor ("<TEAM> under <PERSON>"),
+            # and the time qualifier ("<YEAR> budget").
             ctx_start = max(0, m.start() - 200)
             ctx_end = min(len(text), m.end() + 100)
             ctx = text[ctx_start:ctx_end].strip()
@@ -953,7 +955,7 @@ def _build_merged_quant_roster(results: list["DimensionResult"]) -> str:
         f"context-richness).** Thread these numbers into the report's narrative — "
         f"sweeping qualitative claims ('many users', 'high cost', 'fast growth') "
         f"signal under-citation. Use the exact value with its context unit "
-        f"(`$95M GPU budget`, `100K users`, `20,000 QPS`) so claims are checkable."
+        f"(`$<N>M <kind> budget`, `<N>K users`, `<N> QPS`) so claims are checkable."
     )
     return "\n".join(rows)
 
@@ -1245,15 +1247,16 @@ MORE than your default selectivity instinct allows):
   percentages, counts, rates, sizes). The MERGED QUANTITATIVE CLAIMS
   ROSTER above is the union of every number the dim runners surfaced —
   thread the load-bearing ones into the report's narrative. Strong
-  reference reports cite 100-200 specific numbers (`$95M GPU budget`,
-  `100K users`, `20,000 QPS`, `2,200 A100 80GB`, `+89% YoY`); reports
-  with under 40 specific numbers read as "high level / sweeping" and
-  lose credibility. **Number density beats prose density** — for entity
-  enumeration questions, the prose paragraph "AIP runs production
-  workloads on GPUs" is much weaker than "AIP runs production workloads
-  on ~$95M of GPU budget across 2,200 A100 80GB and 1,400 H200 (Mako
-  fleet)." Always prefer the latter form when the roster supplies the
-  numbers.
+  research reports cite 100-200 specific numbers per memo (using the
+  forms `$<N>M <kind> budget`, `<N>K users`, `<N> QPS`,
+  `<N> <hardware-class>`, `+<N>% YoY`); reports with under 40 specific
+  numbers read as "high level / sweeping" and lose credibility.
+  **Number density beats prose density** — for entity enumeration
+  questions, the prose paragraph "<SUBJECT> runs production workloads
+  on <hardware-class>" is much weaker than "<SUBJECT> runs production
+  workloads on ~$<N>M of <hardware-class> budget across <N>
+  <model-class-A> and <N> <model-class-B>." Always prefer the form
+  with specific numbers and units when the roster supplies them.
 
 HOW TO CITE:
 - Each dimension's `### Citation index` section is a verbatim, capped list
