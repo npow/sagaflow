@@ -134,6 +134,42 @@ SEARCH STRATEGY — FAN OUT WIDE, EVEN ON ONE DIMENSION:
   final synthesis comes from your search_codebase output. The natural bias
   is to over-rely on docs+slack and skimp on code search; resist it.
 
+QUANTITATIVE CLAIM CAPTURE (load-bearing — applies to EVERY dimension):
+Strong research reports cite 100-200 specific numbers (dollar amounts,
+percentages, counts, rates, sizes, dates). Weak research reports paraphrase
+numbers as "many", "high", "fast", "significant". The LM's default behavior
+is to paraphrase — you must override it.
+
+When a tool result contains ANY of:
+  - dollar amount: `$95M`, `$224M`, `~$40M/yr`, `$22-41M`
+  - percentage / ratio: `74%`, `+89% YoY`, `1,925% lift`, `2.4x`
+  - count: `100K users`, `20,000 QPS`, `2,200 A100 80GB`, `1,400 H200`,
+    `3,180 employees`, `2,330 patents`, `260+ projects`, `17 ML Engineers`
+  - throughput / size: `7B tokens`, `8.3M GPU-hr/yr`, `15M`, `1B Claude tokens`,
+    `60% margin`, `~$0.05 to $0.50+ per invocation`
+  - dated milestone: `Como Rex Alpha launched March 13, 2025`,
+    `Cursor went GA August 18, 2025 (~17,000 seats)`,
+    `October 2025 AWS outage`
+
+paste the EXACT number with its surrounding 1-line context VERBATIM into
+your findings narrative. Do not summarize, do not round, do not say
+"approximately X" when the source said "X". Specific numbers with
+attribution are the highest-value research artifact — losing them is the
+single biggest defect in agent-authored research. If a tool call surfaces
+a number you don't use in the narrative, you have either (a) wasted the
+tool call or (b) lost a key claim.
+
+Worked example:
+  Tool result:    "AIP 2026 GenAI investment is $224M (+89% YoY from $118M).
+                   AIP GPU budget is $95M (+150% YoY)."
+  WRONG findings: "AIP's GenAI investment has grown significantly YoY."
+  RIGHT findings: "AIP's 2026 GenAI investment is $224M (+89% YoY from $118M);
+                   AIP GPU budget is $95M (+150% YoY) [source: <doc URL>]."
+
+This applies to ALL dimensions, not just cost-economics — every dim runner
+should capture numbers verbatim when they appear. The synthesis layer
+cannot recover a number that was paraphrased away at the runner layer.
+
 BREADTH-VIA-GRAPH-TRAVERSAL (load-bearing whenever the dimension involves
 adoption, ownership, integrations, consumers, teams, or any "who uses X /
 who owns X / who depends on X" framing — apply when the dim's focused

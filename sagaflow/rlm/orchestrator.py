@@ -833,6 +833,131 @@ def _build_merged_email_inventory(results: list["DimensionResult"]) -> str:
     return "\n".join(rows)
 
 
+def _build_merged_quant_roster(results: list["DimensionResult"]) -> str:
+    """Build a cross-dim quantitative-claim roster for the synthesis prompt.
+
+    Same pattern as `_build_merged_email_inventory` but for numbers:
+    dollar amounts, percentages, counts, GPU/job/user counts. Pulls from
+    each dim's trajectory (where numbers appear in tool-call results
+    verbatim) so synth has a single ground-truth roster of every
+    quantitative claim the research surfaced.
+
+    Why this exists: benchmark of R1 v2 showed pool had 67 distinct
+    numbers but final report had 11 — synth dropped 83% of pool numbers
+    because Haiku's per-dim digest paraphrases them away ("approximately
+    100K users" -> "many users"). Pre-rendering the roster forces synth
+    to thread these numbers into the report's narrative.
+    """
+    import re as _re
+
+    # Match quant_claim pattern with surrounding context. Patterns mirror
+    # the citation extractor; capture broader for context.
+    quant_pat = _re.compile(
+        r"(\$[\d,]+(?:\.\d+)?\s*[KMB]?\b"
+        r"|\b\d+(?:\.\d+)?\s*(?:K|M|B|MM|bn)\b"
+        r"|\b\d{1,3}(?:,\d{3})+\b"
+        r"|\b\d+(?:\.\d+)?\s*%\b"
+        r"|\b\d+(?:\.\d+)?\s*x\b)"
+    )
+
+    # Map number -> best context (longest snippet wins). Context is what
+    # makes the number tellable in the final report.
+    best: dict[str, tuple[str, str]] = {}
+    for r in results:
+        text = (r.findings or "") + "\n" + (r.tool_log or "")
+        # Normalize JSON-escaped trajectory artifacts.
+        text = text.replace("\\n", " ").replace("\\t", " ")
+        text = _re.sub(r"\s+", " ", text)
+        for m in quant_pat.finditer(text):
+            val = m.group(1).rstrip(").,;:!?'\"")
+            if not val:
+                continue
+            # 200 chars before, 100 after — enough to capture the unit
+            # ("$95M GPU budget"), the actor ("AIP under Sura Elamurugu"),
+            # and the time qualifier ("2026 budget").
+            ctx_start = max(0, m.start() - 200)
+            ctx_end = min(len(text), m.end() + 100)
+            ctx = text[ctx_start:ctx_end].strip()
+            prev = best.get(val)
+            if prev is None or len(ctx) > len(prev[1]):
+                best[val] = (r.dimension.name, ctx)
+
+    # Filter out trivial/noise numbers — extract artifacts from logs,
+    # character counts, URL-encoded values, vmaf scores etc. Real
+    # quantitative claims have a unit context word within ±20 chars.
+    UNIT_KEYWORDS = (
+        # currency
+        "$", "USD", "spend", "cost", "budget", "investment", "revenue",
+        "saving", "OPEX", "CAPEX", "yr", "/month", "/yr", "annual",
+        # counts of people / orgs / things
+        "users", "user", "employees", "engineers", "teams", "team", "people",
+        "headcount", "advertisers", "viewers", "streams", "subscribers",
+        "members", "customers", "models", "projects", "repos", "clusters",
+        "namespaces", "workflows", "executions", "deployments", "patents",
+        "filings", "seats", "tokens", "experiments", "GPUs", "GPU", "A100",
+        "H100", "H200", "B200", "TPU", "cores", "nodes", "workers", "jobs",
+        # rates / throughput / scale
+        "QPS", "RPS", "TPS", "/sec", "/min", "/hour", "MoM", "YoY",
+        "concurrent", "active", "weekly", "daily", "hourly",
+        # magnitudes
+        "M", "B", "K", "GB", "TB", "PB", "billion", "million", "thousand",
+        # percentages naturally include % which is part of the regex
+    )
+    # Noise context patterns — clear artifact signals from log/JSON dumps.
+    NOISE_PATTERNS = (
+        "total findings length", "total length", "characters", "%2", "%25",
+        "vmaf", "encodedHarmonic", "Total length:", "p17", "p178",
+    )
+
+    def _useful(val: str, ctx: str) -> bool:
+        ctx_lower = ctx.lower()
+        # Drop URL-encoded noise (`%25`, `%2C`, `%2B` — these masquerade as
+        # percentages but are URL-encoded atlas queries).
+        if "%25" in ctx or "%2c" in ctx_lower or "%2b" in ctx_lower:
+            return False
+        # Drop if context has clear noise markers.
+        if any(p in ctx_lower for p in NOISE_PATTERNS):
+            return False
+        # Drop slack timestamps (long integer IDs).
+        if "ts=" in ctx_lower or "slack" in ctx_lower and val.replace(",", "").isdigit() and len(val.replace(",", "")) >= 6:
+            return False
+        # Drop very-large bare numbers (8+ digits with no decimal) — usually
+        # IDs / vmaf scores / timestamps masquerading as quant claims.
+        bare = val.replace(",", "").lstrip("$").rstrip("%").rstrip("xX")
+        if bare.replace(".", "").isdigit() and len(bare.replace(".", "")) >= 8:
+            return False
+        # Now: $ amounts, %, and Nx ratios are self-marking and trustworthy
+        # after URL-encoding filter above.
+        if val.startswith("$") or val.endswith("%") or val.lower().endswith("x"):
+            return True
+        # For bare comma-numbers and K/M/B suffixes, require a unit keyword.
+        return any(kw.lower() in ctx_lower for kw in UNIT_KEYWORDS)
+
+    filtered = {v: c for v, c in best.items() if _useful(v, c[1])}
+    if not filtered:
+        return "_(no quantitative claims extracted across dimensions)_"
+
+    rows = [
+        "| # | Value | Source dim | Context (truncated) |",
+        "|---|-------|------------|---------------------|",
+    ]
+    # Sort by descending context-length (most-attested numbers first).
+    items = sorted(filtered.items(), key=lambda kv: -len(kv[1][1]))
+    for i, (val, (dim_name, ctx)) in enumerate(items[:80], 1):
+        ctx_short = ctx.replace("|", "\\|")[:180]
+        rows.append(f"| {i} | `{val}` | {dim_name} | {ctx_short} |")
+    if len(items) > 80:
+        rows.append(f"\n_(+{len(items) - 80} additional values truncated for prompt size)_")
+    rows.append(
+        f"\n**Roster size: {len(filtered)} distinct quantitative claims (showing top 80 by "
+        f"context-richness).** Thread these numbers into the report's narrative — "
+        f"sweeping qualitative claims ('many users', 'high cost', 'fast growth') "
+        f"signal under-citation. Use the exact value with its context unit "
+        f"(`$95M GPU budget`, `100K users`, `20,000 QPS`) so claims are checkable."
+    )
+    return "\n".join(rows)
+
+
 def _compress_dimension_findings(
     query: str, dim_name: str, findings: str, tool_log: str = ""
 ) -> str:
@@ -980,6 +1105,7 @@ def synthesize_findings(
     # contexts) gives the synth a single ground-truth roster — the inventory
     # table is then a fill-in-the-blanks exercise rather than a discovery one.
     merged_inventory = _build_merged_email_inventory(successful)
+    merged_quant_roster = _build_merged_quant_roster(successful)
 
     prompt = f"""You are synthesizing research from {len(results)} parallel research agents investigating different dimensions of one topic.
 
@@ -987,6 +1113,10 @@ ORIGINAL QUERY: {query}
 
 FINDINGS FROM EACH DIMENSION:
 {findings_text}
+
+MERGED QUANTITATIVE CLAIMS ROSTER (deterministic, cross-dim union of every
+dollar amount, percentage, count, and rate the runners surfaced):
+{merged_quant_roster}
 
 MERGED EMAIL ROSTER (deterministic, cross-dim union of every team-contact email surfaced):
 {merged_inventory}
@@ -1111,6 +1241,19 @@ MORE than your default selectivity instinct allows):
   has the version from a manifest file or release log; thread the
   specific version inline. Cite the load-bearing ones (cited SDKs,
   blocking-version-of bugs, current-deployed versions).
+- Quantitative claims: **≥40 distinct quant claims** (dollar amounts,
+  percentages, counts, rates, sizes). The MERGED QUANTITATIVE CLAIMS
+  ROSTER above is the union of every number the dim runners surfaced —
+  thread the load-bearing ones into the report's narrative. Strong
+  reference reports cite 100-200 specific numbers (`$95M GPU budget`,
+  `100K users`, `20,000 QPS`, `2,200 A100 80GB`, `+89% YoY`); reports
+  with under 40 specific numbers read as "high level / sweeping" and
+  lose credibility. **Number density beats prose density** — for entity
+  enumeration questions, the prose paragraph "AIP runs production
+  workloads on GPUs" is much weaker than "AIP runs production workloads
+  on ~$95M of GPU budget across 2,200 A100 80GB and 1,400 H200 (Mako
+  fleet)." Always prefer the latter form when the roster supplies the
+  numbers.
 
 HOW TO CITE:
 - Each dimension's `### Citation index` section is a verbatim, capped list
