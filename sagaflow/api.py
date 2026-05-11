@@ -21,7 +21,7 @@ Prompts live in ``prompts/<name>.prompt`` next to ``workflow.py``::
 
     ---
     tier: HAIKU
-    max_tokens: 8192
+    max_tokens: 64000
     ---
     <system>
     You are a security reviewer. Find vulnerabilities.
