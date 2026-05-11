@@ -201,7 +201,7 @@ def _llm_call(prompt: str, *, model: str | None = None, max_tokens: int = 32000)
     return "".join(parts)
 
 
-def decompose_query(query: str, max_dimensions: int = 12) -> list[Dimension]:
+def decompose_query(query: str, max_dimensions: int = 14) -> list[Dimension]:
     """Phase 1: Decompose a research query into enumerative DIRECTIONS.
 
     Ported from the traditional deep-research workflow
@@ -238,6 +238,14 @@ REQUIRED cross-cutting dimensions — include at least ONE direction for EACH:
 - ADJACENT-EFFORTS — overlapping/competing/coexisting systems and their boundaries
 - STRATEGIC-TIMING — decisions accelerating/blocking adoption right now
 - ACTUAL-USAGE — production traffic; active workers; dormant vs alive
+- COST-ECONOMICS — annual spend, $/unit, GPU/compute cost, fleet utilization,
+  waste, savings opportunities; search internal cost dashboards, budget docs,
+  SLT review decks. Without this dim the report skips quantitative cost claims
+  that are usually the load-bearing argument for any infra investment proposal.
+- INDUSTRY-CONTEXT — public/external comparisons: how peers at FAANG/big-tech
+  approach the same problem; what open-source projects exist; canonical
+  benchmarks. Skip ONLY if the question is strictly tenant-internal with no
+  externally-comparable shape.
 
 BALANCE: distribute directions evenly. No single dimension > {per_dim_cap} directions.
 
@@ -278,7 +286,8 @@ RULES:
 - Include the original topic context in EVERY query (researcher sees only their own).
 - Prefix every query with its dimension tag in brackets — `[WHO]`, `[WHAT]`,
   `[HOW]`, `[WHERE]`, `[WHEN]`, `[WHY]`, `[LIMITS]`, `[PRIOR-FAILURE]`,
-  `[BASELINE]`, `[ADJACENT-EFFORTS]`, `[STRATEGIC-TIMING]`, `[ACTUAL-USAGE]`.
+  `[BASELINE]`, `[ADJACENT-EFFORTS]`, `[STRATEGIC-TIMING]`, `[ACTUAL-USAGE]`,
+  `[COST-ECONOMICS]`, `[INDUSTRY-CONTEXT]`.
 - Each direction's `name` is the directory slug — must be unique within the run.
 - Do NOT hardcode tenant- or topic-specific tool names (e.g. specific repo
   hostnames, specific docs hosts, specific chat platforms) into queries or
@@ -1342,7 +1351,7 @@ def run_deep_research(
     query: str,
     *,
     run_dir: str = "/tmp/rlm-deep-research",
-    max_dimensions: int = 12,
+    max_dimensions: int = 14,
     iters_per_dimension: int = 100,
     llm_calls_per_dimension: int = 200,
     max_gap_rounds: int = 3,
