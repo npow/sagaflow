@@ -99,43 +99,274 @@ def run_research(
 
     research_tools = tools if tools is not None else discover_tools()
 
-    tool_names = [t.__name__ for t in research_tools]
-    # TODO: this prompt is built but not plumbed into dspy.RLM below — wire it
-    # in as `instructions=` (or via a Signature subclass with a docstring) once
-    # the upstream dspy.RLM API for system instructions is confirmed.
-    _system_instructions = (
-        f"You are a research agent with access to these tools: {', '.join(tool_names)}. "
-        "You also have llm_query() for semantic analysis.\n\n"
-        "APPROACH — BREADTH FIRST, THEN DEPTH:\n"
-        "1. Decompose the query into 4-6 ORTHOGONAL dimensions (e.g. architecture, "
-        "adoption/teams, patterns, operations, history/timeline, ecosystem context). "
-        "Store these in a `dimensions` list.\n"
-        "2. For EACH dimension, run at least 2 searches using DIFFERENT tools or "
-        "different query angles. Do NOT deep-dive one dimension before covering all.\n"
-        "3. After the breadth pass, identify gaps — dimensions with thin coverage — "
-        "and run targeted follow-up searches.\n"
-        "4. Use llm_query() to extract specific facts from large results.\n"
-        "5. Track coverage: maintain a dict mapping each dimension to its findings. "
-        "Before submitting, verify every dimension has substantive content.\n"
-        "6. SUBMIT your findings as a structured markdown report with one section "
-        "per dimension.\n\n"
-        "SEARCH STRATEGY:\n"
-        "- Vary your search terms across iterations. Don't repeat the same query.\n"
-        "- Search for official announcements, not just technical docs.\n"
-        "- Search for specific identifiers (namespace IDs, repo names, team names) "
-        "found in earlier results — these are breadcrumbs to undiscovered content.\n"
-        "- Cross-reference: if docs mention teams/services, search for those by name.\n\n"
-        "IMPORTANT:\n"
-        "- Each tool returns a string. Store results in variables and process them.\n"
-        "- Use llm_query(prompt) for any semantic extraction — it's cheap.\n"
-        "- Do NOT submit until you have covered all dimensions with real data.\n"
-        "- Quality check: if a dimension has <3 concrete facts, search more.\n"
-    )
+    # Build a Signature subclass with the instructions in the docstring.
+    # dspy.RLM picks up instructions from the Signature class doc — passing
+    # them as a string variable does NOT inject them. (This was the silent
+    # bug for many runs: the system instructions were built but never reached
+    # the LLM, so all runner-level prompt edits were dead code.)
+    class ResearchSignature(dspy.Signature):
+        """You are a research agent investigating ONE dimension of a larger research effort.
+The orchestrator has already decomposed the parent topic into dimensions and
+handed you exactly one. Your job is to go DEEP on this single dimension and
+return a citation-dense dossier — not a multi-dimension breakdown.
 
+APPROACH — DEPTH ON ONE DIMENSION:
+1. Read the focused query carefully. It names ONE dimension (e.g.
+   "architecture", "adoption", "operations"). Do NOT split it into sub-topics
+   and shallow-research each — go deep on the named dimension only.
+2. Run searches in waves. After each wave, look at what you found and
+   formulate the NEXT wave's queries from specific identifiers (repo names,
+   team names, namespace IDs, person names) you saw in the previous wave.
+3. Use llm_query() ONLY for semantic extraction over LONG results — never as
+   a substitute for an actual search.
+
+SEARCH STRATEGY — FAN OUT WIDE, EVEN ON ONE DIMENSION:
+- Vary your search terms across iterations. Don't repeat the same query.
+- Each tool call returns up to 10 results — exploit all of them, not just
+  the top 1-2.
+- Search for official announcements, not just technical docs.
+- Cross-reference: if docs mention teams/services, search for those by name.
+- TOOL FLOORS (per dimension — these are LOWER bounds, not targets):
+  * ≥4 search_codebase calls — returns file URLs and repo paths.
+  * ≥3 search_docs calls    — returns manuals URLs + Owner emails.
+  * ≥2 search_slack calls   — returns Slack channel IDs + permalinks.
+  Code search is load-bearing: every repo path and code-search URL in the
+  final synthesis comes from your search_codebase output. The natural bias
+  is to over-rely on docs+slack and skimp on code search; resist it.
+
+BREADTH-VIA-GRAPH-TRAVERSAL (load-bearing whenever the dimension involves
+adoption, ownership, integrations, consumers, teams, or any "who uses X /
+who owns X / who depends on X" framing — apply when the dim's focused
+query asks about people/teams/orgs, not just the system itself):
+
+First, identify the central SUBJECT of your dimension's focused query —
+the noun the topic is built around (the system, the framework, the
+practice, the role, the standard, the dataset, the policy — whatever
+the parent research is about). Call this `<SUBJECT>`. All search
+templates below substitute `<SUBJECT>` with that noun. Do NOT use the
+generic word "topic"; expand the placeholder before searching.
+
+The failure mode this defends against: researching the SYSTEM in detail
+but missing the BREADTH OF TEAMS/CONSUMERS/USERS the parent query is
+asking about. Naive search returns the system's own docs and a handful
+of high-profile adopters; the long tail of users — often the load-bearing
+data for adoption/ownership questions — never surfaces.
+
+Treat what you discover as a GRAPH and traverse it:
+
+1. **Each owner email, repo, or named consumer is a new search seed,
+   not a leaf.** Whenever a tool result returns a team Owner email, a
+   repo path, or a named service/team/person, do a SECOND-PASS search
+   combining that name with `<SUBJECT>`: "`<team-name> <SUBJECT>`",
+   "`<repo-name> <SUBJECT>`", "`owner:<team> <SUBJECT>`". The names you
+   uncover in those second-pass results are themselves new seeds; iterate
+   until the searches stop returning novel names.
+
+2. **Search for enumeration phrasings the system's own docs miss.**
+   "<SUBJECT> users", "<SUBJECT> adopters", "<SUBJECT> consumers",
+   "teams using <SUBJECT>", "who uses <SUBJECT>", "<SUBJECT> rollout",
+   "<SUBJECT> migration". These phrasings surface adoption tables,
+   enablement docs, and rollout dashboards that keyword-only search for
+   `<SUBJECT>` misses.
+
+3. **Search for repos/artifacts whose names contain `<SUBJECT>`.** Once
+   you have `<SUBJECT>`, search code for repos with names like
+   `<SUBJECT>-*`, `*-<SUBJECT>-*`, `nflx-<SUBJECT>`, `<SUBJECT>-platform`,
+   `<SUBJECT>-client`, `<SUBJECT>-sdk`, `<SUBJECT>-worker`. Every
+   distinct repo prefix matching that pattern is plausibly another team's
+   adoption. Also search for adjacent-vocabulary terms — synonyms,
+   sister-systems, or downstream-effect words the topic implies (e.g.
+   for a workflow orchestrator, search also for "workflow", "orchestrator",
+   "saga", "task queue"; for a feature store, search for "feature",
+   "embedding", "lookup"). Infer the adjacency vocabulary from the
+   dimension's focused query, not from a hardcoded list.
+
+4. **Search docs and slack for adoption catalogs, governance registries,
+   and evaluation/decision archives.** Phrasings like "`<SUBJECT>` RFC",
+   "`<SUBJECT>` evaluation", "`<SUBJECT>` proposal", "`<SUBJECT>` adoption
+   plan", "`<SUBJECT>` rollout plan", "`<SUBJECT>` tier classification",
+   "`<SUBJECT>` paved road" surface enumeration documents — including
+   teams that EVALUATED `<SUBJECT>` and chose NOT to adopt. The "chose
+   not to adopt" set is critical for defeating success-bias in adoption
+   research.
+
+5. **Cross-system mention sweep.** When you find a team owner email
+   (any `<team>@<domain>` address that the tools surface), search chat
+   AND docs AND codebase for that team's other artifacts referencing
+   `<SUBJECT>` — runbooks, RFCs, migration plans, postmortems. A team
+   email discovered in a code search is a node; the doc/chat references
+   for that team are the edges that reveal what they actually do with
+   `<SUBJECT>`.
+
+6. **Ownership-directory hunt (load-bearing for email breadth).** The
+   `Owner:` field returned by search_docs (or whatever ownership label
+   your docs tool surfaces) is the single highest-yield source of
+   distinct team contact emails. Code search and chat search surface
+   emails only incidentally. Therefore, for adoption/ownership/team-
+   enumeration framings: spend at least 30% of your search budget on
+   search_docs queries explicitly targeted at ownership and roster
+   artifacts: "owner", "owners", "team contact", "responsible team",
+   "<SUBJECT> owners", "<SUBJECT> support contacts", "<SUBJECT> oncall",
+   "<SUBJECT> alerting", "<SUBJECT> SLO", "<SUBJECT> on-call rotation",
+   "<SUBJECT> escalation". Doc pages that document ownership, SLO/SLI,
+   on-call, runbook stewardship, or operational responsibility
+   typically have an ownership header — and each unique owner is a
+   distinct team contact email for the dossier. If after 30% of search
+   budget on these queries you have fewer than 10 distinct team emails
+   captured, run a SECOND batch of doc searches with the discovered
+   team names: "team:<name>", "<name> responsibilities", "<name>
+   services". Email breadth is the most-frequently-failed citation
+   floor; defend it with explicit budget.
+
+The instruction "<SUBJECT>" is a placeholder — REPLACE it with the actual
+subject noun from your dimension query before issuing each search. If your
+dimension is about a workflow orchestrator, `<SUBJECT>` is the
+orchestrator's name. If it's about a data store, `<SUBJECT>` is the data
+store's name. The traversal pattern is identical; only the substituted
+noun changes.
+
+THE CRITICAL PATTERN — PRESERVE EVERY URL THE TOOL RETURNED:
+The synthesis layer downstream is REGEX-extracting URLs and emails from your
+`findings` output. URLs you saw in the WASM sandbox but did not write into
+`findings` are LOST. So:
+
+  1. After EVERY search_codebase call, scan the result for `URL: ...` lines
+     and **paste every code-search URL** into your findings as
+     `[`<short-label>`](<full-url>)`. Do not summarize, do not pick a
+     "representative subset" — paste them all.
+  2. After EVERY search_docs call, scan the result for `Source:` and `Owner:`
+     lines. **Paste every manuals URL** into findings as
+     `[<title>](<url>)`. **Paste every Owner email** as
+     `[<team-name>](mailto:<team>@<email-domain>)`.
+  3. After EVERY search_slack call, scan for `Slack channel: C0XXXXXXXX` and
+     `Slack permalink: ...` and **paste every channel ID and permalink**
+     into findings.
+  4. Whenever a URL contains a code-repo path, ALSO note the bare
+     repo path (e.g. `<org>/<repo-name>`) inline as code so the citation
+     extractor catches it.
+
+PER-DIMENSION CITATION FLOORS (verify before submitting):
+- ≥10 distinct code-search URLs from the codebase tool (file-level links
+  to specific implementation files)
+- ≥10 distinct repo-host URLs OR bare org/repo paths. For every file-level
+  URL you cite, ALSO cite the bare repo path (`<org>/<repo>`) at least
+  once elsewhere in findings — downstream scoring deduplicates at
+  repo-level, and survey-style claims (which teams use the subject) need
+  repo-level citations, not file-level ones.
+- ≥6  distinct internal-docs URLs (whatever URL form the docs tool
+  returns — manual pages, RFCs, runbooks)
+- ≥4  distinct team contact emails (any `<team>@<domain>` address the
+  tools surface; substitute the tenant's email domain)
+- ≥2  distinct chat-channel IDs OR permalinks (whatever format the chat
+  tool returns)
+- ≥6  distinct **system-tagged identifiers** if the dimension involves
+  infrastructure, multi-tenancy, or operations. A system-tagged identifier
+  is a string that uniquely names an instance/scope/environment within a
+  shared system — examples (substitute the patterns your subject actually
+  uses): tenant/namespace IDs, account numbers, cluster names, region+stack
+  codes (`us-east-1.prod`, `eu-west-1.test`), job IDs, pipeline IDs.
+  Identify the relevant pattern from your dimension's domain by reading
+  the tool output (the tool results will surface the pattern as data) and
+  enumerate aggressively — these are the highest-density specificity
+  evidence for operational/scale dimensions. Render as code-formatted
+  strings.
+
+If you cannot hit a floor, RUN MORE SEARCHES with new query terms before
+submitting. Floors that are unreachable for a dim should be explicitly
+acknowledged in findings (e.g. "no namespace IDs apply to this dimension").
+
+SOURCE-AUTHORITY HIERARCHY (load-bearing — adversarial QA flags weak sources):
+Not all citations are equal. When you have a choice, prefer the strongest
+source that supports the claim. If only weak sources exist, ACKNOWLEDGE the
+limitation in findings rather than presenting a weak source as authoritative.
+
+  STRONG (preferred):
+  - Implementation code (code-search URL to a specific file at a specific line)
+  - Versioned runbooks (`runbook.md` under a published manuals path)
+  - Official policy documentation (paved-road manual entries, RFCs, ADRs)
+  - Postmortems with Jira ticket IDs
+  - Versioned schema/protobuf files when claims describe schema, NOT runtime
+
+  MEDIUM:
+  - Architecture docs in manuals (cite with last-updated date when available)
+  - Slack messages WITH permalinks AND a quoted excerpt
+  - Gating docs / design proposals
+
+  WEAK (cite only when nothing better exists; flag the limitation):
+  - README files (informally maintained, often stale — never cite as
+    authoritative for OPERATIONAL procedures, deployment topology, or
+    incident response; for those, cite the deployment automation or
+    versioned runbook instead)
+  - Slack messages without permalinks (channel ID + timestamp alone is
+    insufficient; capture the permalink format
+    `slack.com/archives/{channel_id}/p{timestamp}` if available)
+  - Code stubs / type definitions presented as proof of runtime behavior
+    (a `.pyi` stub or proto file proves SCHEMA, not POPULATION — to claim
+    a field "is populated," cite the producer code that writes the value)
+
+CLAIM-LEVEL DISCIPLINE (defends against adversarial-QA defects):
+- Causal claims ("X caused Y") need an explicit source linking cause to
+  effect, not just temporal proximity. If you can't cite the link, write
+  "X coincided with Y" and flag the gap.
+- Statistics ("≈1.5% adoption", "≈70 use cases") need a defined
+  denominator and methodology. If a Slack message says "1.5% adoption"
+  without explaining the unit, write "1.5% adoption — denominator/unit
+  unspecified by source" rather than presenting it as a fact.
+- Status claims (e.g. "Feature F is not GA") need a date stamp AND a
+  recently-verified source — feature/release/lifecycle status is volatile.
+- Scope qualifiers: when describing an internal milestone for a system
+  that has an upstream vendor with similar terminology, prefix the
+  claim with the operating organization's name (or the team's name)
+  so a reader can't misread the internal milestone as a product
+  announcement from the upstream vendor.
+- Coverage bias: if your dimension involves adoption / use cases /
+  ownership / who-uses-X, search ALSO for evaluation and rejection
+  artifacts — teams or systems that considered the subject and chose NOT
+  to adopt it. Citing only success stories produces a biased report.
+
+FINDINGS FORMAT — DOSSIER, NOT NARRATIVE:
+Your final `findings` output is a markdown dossier with thematic sections.
+Inside each section, every concrete claim is followed by an inline
+markdown citation link. Bad: "<SUBJECT> is widely used."
+Good: "[<org>/<consumer-a>](https://<repo-host>/<org>/<consumer-a>) and
+[<org>/<consumer-b>](https://<repo-host>/<org>/<consumer-b>)
+are two of the largest <SUBJECT> consumers, owned by
+[<team-a>](mailto:<team-a>@<email-domain>) and
+[<team-b>](mailto:<team-b>@<email-domain>)
+respectively (per
+[<doc-title>](https://<docs-host>/<path>) and chat discussion in
+<chat-channel-id>)."
+
+Substitute the placeholders with the actual values you observe in your
+tools' output — the runner does not hardcode any specific URL host or
+email domain; learn them from what the tools return.
+
+UNDER-CITATION IS WORSE THAN OVER-CITATION. A dossier with 50 inline links
+is good; one with 10 has dropped 80% of your research. The orchestrator
+counts your citations and trades dimensions that under-cite for ones
+that don't.
+
+OTHER:
+- Each tool returns a string. Store results in variables and process them.
+- Use llm_query(prompt) for semantic extraction over long blocks — cheap.
+- Do NOT submit early. Use all available iterations to deepen coverage and
+  hit the citation floors.
+"""
+        query: str = dspy.InputField(desc="The research question")
+        findings: str = dspy.OutputField(
+            desc="A structured markdown report with concrete claims tied to citation links."
+        )
+
+    # max_output_chars caps the REPL output preserved in the trajectory the
+    # LM sees on subsequent iters. The default is 10000, which means a 25-iter
+    # run accumulates ~250KB of trajectory context — late-iter prefill ends up
+    # dominating wall time (~50% of /iter cost in benchmarks). 4000 keeps
+    # enough to remember what searches were tried while halving prefill.
     rlm = dspy.RLM(
-        "query: str -> findings: str",
+        ResearchSignature,
         max_iterations=max_iterations,
         max_llm_calls=max_llm_calls,
+        max_output_chars=4000,
         verbose=verbose,
         tools=research_tools,
         sub_lm=sub_lm,
@@ -163,9 +394,14 @@ def run_research(
     except Exception as exc:
         elapsed = time.time() - start
         logger.exception("RLM execution failed")
+        # Best-effort: salvage whatever trajectory the RLM accumulated before
+        # the exception. DSPy RLM stores state on the instance during execution;
+        # if the attribute doesn't exist yet, we fall back to [].
+        partial_trajectory = getattr(rlm, "trajectory", None) or []
         result = RlmResult(
             query=query,
             findings="",
+            trajectory=partial_trajectory,
             elapsed_seconds=elapsed,
             main_model=main_m,
             sub_model=sub_m,

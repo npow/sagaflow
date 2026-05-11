@@ -578,9 +578,17 @@ class RunShellResult:
 
 @activity.defn(name="run_shell")
 async def run_shell_activity(inp: RunShellInput) -> RunShellResult:
-    """Run a shell command deterministically. No agent — just subprocess."""
-    activity.heartbeat(f"running: {inp.label or inp.command[:80]}")
+    """Run a shell command deterministically. No agent — just subprocess.
+
+    Heartbeats every ``HEARTBEAT_INTERVAL_SECONDS`` while the subprocess runs
+    so long-running shells (e.g. deep-research orchestrator at 30-90 min) keep
+    the activity alive when callers set ``heartbeat_timeout``.
+    """
+    activity.heartbeat(f"starting: {inp.label or inp.command[:80]}")
     env = {**dict(__import__("os").environ), **(inp.env or {})}
+
+    proc: asyncio.subprocess.Process | None = None
+    heartbeat_task = asyncio.create_task(_heartbeat_loop())
     try:
         proc = await asyncio.create_subprocess_shell(
             inp.command,
@@ -598,8 +606,13 @@ async def run_shell_activity(inp: RunShellInput) -> RunShellResult:
             exit_code=proc.returncode or 0,
         )
     except asyncio.TimeoutError:
-        proc.kill()
+        if proc is not None:
+            proc.kill()
         return RunShellResult(stdout="", stderr="timeout", exit_code=124, timed_out=True)
+    finally:
+        heartbeat_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await heartbeat_task
 
 
 @dataclass(frozen=True)
