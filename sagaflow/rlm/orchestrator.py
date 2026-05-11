@@ -322,7 +322,86 @@ RULES:
         )
         for i, d in enumerate(dims_raw)
     ]
+
+    # Verify-and-fix: ensure required cross-cuts present. Sonnet routinely
+    # disregards "REQUIRED" prompt directives when generating dims that look
+    # complete to it — measured across multiple benches that COST-ECONOMICS
+    # and INDUSTRY-CONTEXT got dropped even at max_dimensions=14. Force-add
+    # missing cross-cuts as synthesized directions if they're absent.
+    REQUIRED_CROSSCUTS = {
+        "PRIOR-FAILURE": (
+            "Who evaluated and abandoned this approach? What didn't work, "
+            "what got rolled back, and what's the post-mortem?"
+        ),
+        "BASELINE": (
+            "What authoritative registries, canonical lists, or allocation "
+            "sheets enumerate the entities in scope?"
+        ),
+        "ADJACENT-EFFORTS": (
+            "What overlapping, competing, or coexisting systems exist? "
+            "Where are the boundaries between them?"
+        ),
+        "STRATEGIC-TIMING": (
+            "What decisions, deadlines, or events are accelerating or "
+            "blocking adoption right now?"
+        ),
+        "ACTUAL-USAGE": (
+            "What's the production traffic shape — active workers vs "
+            "dormant vs alive — for the systems in scope?"
+        ),
+        "COST-ECONOMICS": (
+            "Annual or monthly spend per subsystem; $/unit unit costs; "
+            "GPU/CPU/compute fleet utilization rates; identified waste; "
+            "savings opportunities. Search internal cost dashboards, "
+            "FinOps tooling, budget docs, and SLT review decks."
+        ),
+        "INDUSTRY-CONTEXT": (
+            "How do peers (FAANG, hyperscalers, open-source projects, "
+            "vendors) approach the same problem? What public benchmarks, "
+            "papers, or announcements set the comparison baseline? Use "
+            "web_search for external sources."
+        ),
+    }
+
+    def _slug(tag: str) -> str:
+        return tag.lower().replace("-", "-")
+
+    present_tags: set[str] = set()
+    for d in dims:
+        m = _re_dim_tag.match(d.query)
+        if m:
+            present_tags.add(m.group(1).upper())
+
+    missing = [tag for tag in REQUIRED_CROSSCUTS if tag not in present_tags]
+    if missing:
+        logger.warning(
+            "decompose dropped required cross-cuts: %s — force-adding", missing
+        )
+        for tag in missing:
+            dims.append(Dimension(
+                name=f"{tag.lower()}-forced",
+                query=f"[{tag}] {REQUIRED_CROSSCUTS[tag]} (Topic: {query})",
+                search_strategy=(
+                    "Generic angles: search internal docs, code, and chat "
+                    "for the dimension's keywords; for INDUSTRY-CONTEXT use "
+                    "web_search to find external comparisons."
+                ),
+            ))
+
+    # Trim back to max_dimensions if force-adds pushed us over. Prefer to
+    # KEEP the force-added cross-cuts (they're the rare ones); drop excess
+    # main-dimension directions if needed.
+    if len(dims) > max_dimensions:
+        forced = [d for d in dims if d.name.endswith("-forced")]
+        non_forced = [d for d in dims if not d.name.endswith("-forced")]
+        keep_non_forced = max(0, max_dimensions - len(forced))
+        dims = non_forced[:keep_non_forced] + forced
+
     return dims[:max_dimensions]
+
+
+# Compiled once at module load — used by decompose post-validation.
+_re_dim_tag = __import__("re").compile(r"^\s*\[([A-Z][A-Z-]+)\]")
 
 
 def _run_dimension_subprocess(
@@ -520,6 +599,18 @@ _CITATION_PATTERNS: dict[str, str] = {
     # Version identifiers: vX.Y, vX.Y.Z, X.Y.Z. Same rationale — pool has
     # PR-diff version churn; surface the meaningful SDK/API versions.
     "version_id": r"\bv\d+\.\d+(?:\.\d+)?\b|\b\d+\.\d+\.\d+\b",
+    # Quantitative claims: dollar amounts, percentages, large-number counts,
+    # human-scale numbers with units. Synth (especially Haiku digest) drops
+    # these by default — measured 27 -> 1 dropout on R3 v2. Surfacing them in
+    # the cit_index makes them survive map-reduce digestion.
+    "quant_claim": (
+        r"\$[\d,]+(?:\.\d+)?\s*[KMB]?\b"
+        r"|\b\d+(?:\.\d+)?\s*(?:K|M|B|MM|bn)\b"
+        r"|\b\d{1,3}(?:,\d{3})+\b"
+        r"|\b\d+(?:\.\d+)?\s*%\b"
+        r"|\b\d+(?:\.\d+)?\s*x\b"
+        r"|\b\d+\s*(?:hours?|days?|weeks?|months?|years?|seconds?|ms|GB|TB|PB|GPU|GPUs|cores?|nodes?|workers?|jobs?)\b"
+    ),
 }
 
 
@@ -625,6 +716,10 @@ _PER_KIND_CAP: dict[str, int] = {
     # smaller caps surface the highest-prominence values.
     "date_specific": 30,
     "version_id": 25,
+    # Quant claims (dollar amounts, percentages, counts with units) — pool
+    # typically has 30-80 of these once a COST-ECONOMICS dim runs. Cap to
+    # keep the index focused on load-bearing claims.
+    "quant_claim": 40,
 }
 
 
@@ -645,6 +740,7 @@ def _format_citation_index(citations: dict[str, list[str]]) -> str:
         "team_email": "Team contact emails",
         "date_specific": "Specific dates",
         "version_id": "Version identifiers",
+        "quant_claim": "Quantitative claims (dollar amounts, percentages, counts)",
     }
     for kind, items in citations.items():
         cap = _PER_KIND_CAP.get(kind, 100)
