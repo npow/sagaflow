@@ -507,6 +507,16 @@ def _run_dimension_subprocess(
         error: str | None = None
         if timed_out:
             error = f"timeout after {subprocess_timeout}s (process group killed)"
+            # Log stdout/stderr tails so we can diagnose hung-at-0-iters
+            # situations. Earlier silent timeouts left no record of WHY the
+            # subprocess hung — couldn't distinguish LM gateway slowness
+            # from Deno sandbox failure from infinite-loop tool calls.
+            _stdout_tail = (stdout or "")[-1500:] or "(empty)"
+            _stderr_tail = (stderr or "")[-1500:] or "(empty)"
+            logger.warning(
+                "dim '%s' timeout — stdout tail:\n%s\nstderr tail:\n%s",
+                dim.name, _stdout_tail, _stderr_tail,
+            )
         elif returncode != 0:
             err_tail = (stderr or "")[-2000:] or f"exit code {returncode}"
             error = err_tail
@@ -1059,10 +1069,14 @@ def synthesize_findings(
             count = len(_re.findall(_quant_pat, text))
             return count / max(1, len(text) / 1000.0)
 
-        # Threshold: >5 quant claims per 1K chars = "quant-dense" dim.
-        # Typical narrative dims sit at 0.2-1.0; cost/usage dims with
-        # execute_query results sit at 8-15.
-        QUANT_DENSITY_THRESHOLD = 5.0
+        # Threshold: ≥1.0 quant claims per 1K chars = "quant-dense" dim.
+        # Typical pure-narrative dims sit at 0.0-0.3; dims that surface a
+        # cost report or production-metrics table sit at 1.0-3.0; dims with
+        # heavy execute_query results sit at 5-15. Measured R1 v6: actual-
+        # usage dim hit 1.02, where-central-infra hit 0.54. Setting the
+        # threshold at 1.0 catches "richer than prose" dims while avoiding
+        # pure-narrative bypass (which would blow the context budget).
+        QUANT_DENSITY_THRESHOLD = 1.0
 
         densities = {r.dimension.name: _quant_density(r.findings) for r in successful}
         bypass_set: set[str] = set()
