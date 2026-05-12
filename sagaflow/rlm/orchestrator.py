@@ -1430,11 +1430,14 @@ to thread EVERY surfaced identifier into the report as a citation, not to
 re-curate. UNDER-CITATION IS WORSE THAN OVER-CITATION. A report with 300
 inline links is fine; a report with 100 has dropped most of the research."""
 
-    # Use the default 32K safety valve — synthesis decides its own length
-    # based on the citation count it needs to emit. Setting an explicit lower
-    # cap here forced the model into a length/citation tradeoff that dropped
-    # ~80% of source URLs to fit a too-small budget.
-    response = _llm_call(prompt)
+    # Use MGP's full 64K output budget for the main synthesis call.
+    # The synth prompt grows with quant_count of the underlying dims (the
+    # cost-econ dim's content count=1138 caused R1 v10c to truncate
+    # mid-sentence at the 32K default cap, dropping the inventory's tail
+    # and the entire revise rewrite to ~50% of normal length — measured
+    # specific_numbers distinct=8 vs v9's 84 with the same code at 32K).
+    # 64K is MGP's upstream cap for Sonnet 4.6 (per _llm_call docstring).
+    response = _llm_call(prompt, max_tokens=64000)
 
     gaps: list[Dimension] = []
     try:
@@ -1661,7 +1664,10 @@ REVISION RULES:
 
 Output ONLY the revised report markdown — no explanatory preamble, no
 listing of what you changed. The revised report goes straight to users."""
-    revised = _llm_call(prompt, model=MAIN_MODEL)
+    # Revise must be able to write at least as much as synthesis did
+    # (rule 7: "DO NOT trim the report's overall length"). Match the
+    # synth call's 64K budget.
+    revised = _llm_call(prompt, model=MAIN_MODEL, max_tokens=64000)
     return revised
 
 
