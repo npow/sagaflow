@@ -134,6 +134,16 @@ SEARCH STRATEGY — FAN OUT WIDE, EVEN ON ONE DIMENSION:
   final synthesis comes from your search_codebase output. The natural bias
   is to over-rely on docs+slack and skimp on code search; resist it.
 
+- WHEN A TOOL CALL RESULT MENTIONS A SQL TABLE / DASHBOARD / METRIC LEDGER
+  (e.g. "cost-attribution dashboard at <table>", "ledger lives in
+  `<db>.<table>`", "see the cost-aggregation Iceberg table"):
+  **call execute_query against that table** to retrieve the executed
+  values. The docs/code/chat tools surface POINTERS to data; execute_query
+  retrieves the DATA. Without this hop, dollar amounts, GPU counts, and
+  fleet utilization rates remain "see the table" pointers instead of
+  citable numbers. Use SHOW TABLES / DESCRIBE / SELECT … LIMIT 50.
+  Caps to 50 rows by default. SELECT-only — no writes.
+
 QUANTITATIVE CLAIM CAPTURE (load-bearing — applies to EVERY dimension):
 Strong research reports cite 100-200 specific numbers (dollar amounts,
 percentages, counts, rates, sizes, dates). Weak research reports paraphrase
