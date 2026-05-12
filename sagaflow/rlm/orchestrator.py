@@ -1487,17 +1487,29 @@ REVISION RULES:
 2. For each scope violation: remove the entry from the inventory and any
    detailed profile. If the entry is borderline, mark it explicitly as
    `(out of scope — listed for completeness only)`.
-3. For each unsourced claim: either add an inline citation from the
-   dimension findings the original synthesis drew from, or weaken the
-   claim's language ("approximately" / "reportedly") if a precise source
-   is unavailable.
-4. DO NOT shrink the inventory table beyond removing scope violations.
+3. For each unsourced quantitative claim or specific number: **PRESERVE
+   the number, weaken the claim's language**. Add "approximately",
+   "reportedly", "per uncited internal source", or "(unsourced — flagged
+   for follow-up)" to acknowledge the gap WITHOUT dropping the number.
+   Specific numbers are the highest-value research artifact; dropping
+   them on the grounds of weak sourcing strips the report of its
+   load-bearing claims. **Default action on unsourced numbers is to KEEP
+   them with weakened language, never DROP them.**
+4. For each unsourced non-numerical claim (existence claims, status
+   claims, version claims): either add an inline citation from the
+   citation index, or weaken with "reportedly" / "per uncited internal
+   source." Same principle as rule 3 — prefer weakening over dropping.
+5. DO NOT shrink the inventory table beyond removing scope violations.
    Every team-alias email that appears in the original inventory MUST
    stay in the revised inventory (unless the verifier flagged it
    specifically as a scope violation).
-5. DO NOT trim the report's overall length. The revised report should be
+6. DO NOT drop specific numbers, dollar amounts, percentages, counts,
+   dates, or version IDs from the report. If the verifier said a number
+   was unsourced, KEEP THE NUMBER and add a weakening qualifier — do not
+   replace `$<N>M` with "significant cost" or "$<N>" with "many".
+7. DO NOT trim the report's overall length. The revised report should be
    at least as long as the original.
-6. Preserve all internal structural sections (Overview, Inventory,
+8. Preserve all internal structural sections (Overview, Inventory,
    Detailed Profiles, Namespace Enumeration, etc.).
 
 Output ONLY the revised report markdown — no explanatory preamble, no

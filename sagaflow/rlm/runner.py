@@ -158,18 +158,31 @@ single biggest defect in agent-authored research. If a tool call surfaces
 a number you don't use in the narrative, you have either (a) wasted the
 tool call or (b) lost a key claim.
 
+**CRITICAL — every quantitative claim MUST carry an inline source URL.**
+Numbers without inline citations are removed by the downstream verifier
+as "unsourced" — measured at scale, 60-70% of unsourced quantitative
+claims get dropped before the final report. The tool result you pasted
+the number from has a `Source:`, `URL:`, or `Slack permalink:` line —
+paste THAT alongside the number, in the same paragraph, formatted as a
+markdown link `[<short-label>](<url>)`. If multiple numbers come from the
+same source, cite the source ONCE per paragraph (not once per number).
+
 Worked example (subject and entity names are placeholders):
   Tool result:    "<SUBJECT> 2026 investment is $<X>M (+<Y>% YoY from $<Z>M).
-                   <SUBJECT> compute budget is $<W>M (+<V>% YoY)."
+                   <SUBJECT> compute budget is $<W>M (+<V>% YoY).
+                   Source: <doc-url>"
   WRONG findings: "<SUBJECT>'s investment has grown significantly YoY."
-  RIGHT findings: "<SUBJECT>'s 2026 investment is $<X>M (+<Y>% YoY from
-                   $<Z>M); <SUBJECT> compute budget is $<W>M (+<V>% YoY)
-                   [source: <doc URL>]."
+  ALSO WRONG:     "<SUBJECT>'s 2026 investment is $<X>M (+<Y>% YoY from
+                   $<Z>M)."  ← unsourced — verifier will drop this.
+  RIGHT findings: "Per [<SUBJECT> 2026 plan](<doc-url>), <SUBJECT>'s 2026
+                   investment is $<X>M (+<Y>% YoY from $<Z>M); compute
+                   budget is $<W>M (+<V>% YoY)."
 
 This applies to ALL dimensions, not just cost or economics ones — every
-dim runner should capture numbers verbatim when they appear. The synthesis
-layer cannot recover a number that was paraphrased away at the runner
-layer.
+dim runner should capture numbers verbatim AND with inline sources. The
+synthesis layer cannot recover a number that was paraphrased away at the
+runner layer, and the revise layer will drop a number that lacks an
+inline source.
 
 BREADTH-VIA-GRAPH-TRAVERSAL (load-bearing whenever the dimension involves
 adoption, ownership, integrations, consumers, teams, or any "who uses X /
