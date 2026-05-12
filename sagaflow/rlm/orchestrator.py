@@ -956,18 +956,65 @@ def _build_merged_quant_roster(results: list["DimensionResult"]) -> str:
     ]
     # Sort by descending context-length (most-attested numbers first).
     items = sorted(filtered.items(), key=lambda kv: -len(kv[1][1]))
-    for i, (val, (dim_name, ctx)) in enumerate(items[:80], 1):
+    # Roster cap is a prompt-size guardrail, not a content limit. Render
+    # all distinct quant claims by default; truncate only when the
+    # roster would balloon the synth prompt. Tunable per tenant via
+    # RLM_SYNTH_ROSTER_CAP. The default is set high enough that typical
+    # research runs render the full union; the truncation message tells
+    # the synthesizer how many got trimmed if budget ran out.
+    roster_cap = int(os.environ.get("RLM_SYNTH_ROSTER_CAP", "250"))
+    for i, (val, (dim_name, ctx)) in enumerate(items[:roster_cap], 1):
         ctx_short = ctx.replace("|", "\\|")[:180]
         rows.append(f"| {i} | `{val}` | {dim_name} | {ctx_short} |")
-    if len(items) > 80:
-        rows.append(f"\n_(+{len(items) - 80} additional values truncated for prompt size)_")
+    if len(items) > roster_cap:
+        rows.append(f"\n_(+{len(items) - roster_cap} additional values truncated for prompt size)_")
     rows.append(
-        f"\n**Roster size: {len(filtered)} distinct quantitative claims (showing top 80 by "
-        f"context-richness).** Thread these numbers into the report's narrative — "
-        f"sweeping qualitative claims ('many users', 'high cost', 'fast growth') "
+        f"\n**Roster size: {len(filtered)} distinct quantitative claims "
+        f"(showing top {min(len(items), roster_cap)} by context-richness).** "
+        f"Thread these numbers into the report's narrative — sweeping "
+        f"qualitative claims ('many users', 'high cost', 'fast growth') "
         f"signal under-citation. Use the exact value with its context unit "
-        f"(`$<N>M <kind> budget`, `<N>K users`, `<N> QPS`) so claims are checkable."
+        f"(`$<N>M <kind> budget`, `<N>K users`, `<N> QPS`) so claims are "
+        f"checkable."
     )
+    return "\n".join(rows)
+
+
+def _build_per_dim_quant_table(findings: str, tool_log: str) -> str:
+    """Extract a per-dim quantitative-claims table with context.
+
+    Same pattern as ``_build_merged_quant_roster`` but scoped to one dim's
+    text. Returned as a verbatim markdown table appended to the dim's
+    digest so the synth layer sees the numbers even when Haiku's prose
+    digest paraphrased them away. The table format mirrors the global
+    roster so the synthesizer can treat all roster rows uniformly.
+    """
+    import re as _re
+    quant_pat = _re.compile(
+        r"(\$[\d,]+(?:\.\d+)?\s*[KMB]?\b"
+        r"|\b\d+(?:\.\d+)?\s*(?:K|M|B|MM|bn)\b"
+        r"|\b\d{1,3}(?:,\d{3})+\b"
+        r"|\b\d+(?:\.\d+)?\s*%\b"
+        r"|\b\d+(?:\.\d+)?\s*x\b)"
+    )
+    text = (findings or "") + "\n" + (tool_log or "")
+    text = text.replace("\\n", " ").replace("\\t", " ")
+    text = _re.sub(r"\s+", " ", text)
+    best: dict[str, str] = {}
+    for m in quant_pat.finditer(text):
+        val = m.group(1).rstrip(").,;:!?'\"")
+        if not val:
+            continue
+        ctx = text[max(0, m.start() - 120):min(len(text), m.end() + 60)].strip()
+        if len(ctx) > len(best.get(val, "")):
+            best[val] = ctx
+    if not best:
+        return ""
+    rows = ["| Value | Context (truncated) |", "|-------|---------------------|"]
+    items = sorted(best.items(), key=lambda kv: -len(kv[1]))
+    for val, ctx in items:
+        ctx_safe = ctx.replace("|", "\\|")[:160]
+        rows.append(f"| `{val}` | {ctx_safe} |")
     return "\n".join(rows)
 
 
@@ -989,6 +1036,12 @@ def _compress_dimension_findings(
     we recover them by regex-scraping the trajectory. This is load-bearing
     for citation density — without it, the synthesis layer can only cite
     what the runner happened to paste.
+
+    A per-dim quantitative table is ALSO appended verbatim — same
+    rationale as the citation index, but for numbers. Haiku's prose
+    summary tends to round / paraphrase / drop specific values; the
+    regex-extracted table preserves them losslessly so the synthesizer
+    sees both the narrative and the raw values.
     """
     prompt = (
         f"Compress this research finding into a dense narrative digest for a downstream synthesizer.\n\n"
@@ -1016,10 +1069,16 @@ def _compress_dimension_findings(
     # didn't paste into findings are still surfaced to synthesis.
     citations = _extract_citations(findings + "\n" + tool_log)
     citation_block = _format_citation_index(citations)
+    quant_table = _build_per_dim_quant_table(findings, tool_log)
+    quant_section = (
+        f"\n### Per-dim quantitative claims (regex-extracted from findings + trajectory — preserve in synthesis)\n{quant_table}\n"
+        if quant_table else ""
+    )
     return (
         f"{summary}\n\n"
         f"### Citation index (extracted from raw findings AND runner tool-call trajectory — use these for inline links)\n"
         f"{citation_block}\n"
+        f"{quant_section}"
     )
 
 
@@ -1063,37 +1122,43 @@ def synthesize_findings(
         # Direct path preserves the numbers.
         import re as _re
         _quant_pat = _CITATION_PATTERNS.get("quant_claim", "")
-        def _quant_density(text: str) -> float:
+        def _quant_count(text: str) -> int:
             if not text or not _quant_pat:
-                return 0.0
-            count = len(_re.findall(_quant_pat, text))
-            return count / max(1, len(text) / 1000.0)
+                return 0
+            return len(_re.findall(_quant_pat, text))
 
-        # Threshold: ≥1.0 quant claims per 1K chars = "quant-dense" dim.
-        # Typical pure-narrative dims sit at 0.0-0.3; dims that surface a
-        # cost report or production-metrics table sit at 1.0-3.0; dims with
-        # heavy execute_query results sit at 5-15. Measured R1 v6: actual-
-        # usage dim hit 1.02, where-central-infra hit 0.54. Setting the
-        # threshold at 1.0 catches "richer than prose" dims while avoiding
-        # pure-narrative bypass (which would blow the context budget).
-        QUANT_DENSITY_THRESHOLD = 1.0
+        # Bypass policy: the map-reduce digest is lossy for numbers (Haiku
+        # paraphrases ~70% of quant claims away regardless of how many a
+        # dim surfaces). Any dim that surfaced quant claims at all is a
+        # candidate to skip the digest and pass raw findings directly to
+        # the Sonnet synthesizer. A character-budget cap (not a per-dim
+        # threshold) bounds the total bypass volume — the synth model has
+        # finite context, so we prioritize the dims that produced the
+        # most quant content and let the budget gate when to stop.
+        counts = {
+            r.dimension.name: _quant_count((r.findings or "") + "\n" + (r.tool_log or ""))
+            for r in successful
+        }
 
-        densities = {r.dimension.name: _quant_density(r.findings) for r in successful}
         bypass_set: set[str] = set()
         bypass_chars = 0
-        # Allow up to 60K chars of bypass (keeps synth prompt under ~250K total).
-        BYPASS_CHAR_BUDGET = 60_000
-        for name, d in sorted(densities.items(), key=lambda kv: -kv[1]):
-            if d < QUANT_DENSITY_THRESHOLD:
-                break
+        # Budget sized to fit ~3-4 average dim findings without pushing
+        # the synth prompt past ~280K tokens for the gateway. Tunable
+        # via RLM_SYNTH_BYPASS_CHAR_BUDGET if a tenant has a larger
+        # context budget.
+        BYPASS_CHAR_BUDGET = int(os.environ.get("RLM_SYNTH_BYPASS_CHAR_BUDGET", "80000"))
+        for name in sorted(counts.keys(), key=lambda n: -counts[n]):
+            if counts[name] <= 0:
+                break  # rest of the dims surfaced no quant claims — digest is fine
             r = next(r for r in successful if r.dimension.name == name)
             if bypass_chars + len(r.findings) > BYPASS_CHAR_BUDGET:
                 continue
             bypass_set.add(name)
             bypass_chars += len(r.findings)
             logger.info(
-                "synthesize: bypassing digest for quant-dense dim %s "
-                "(density=%.1f, %d chars)", name, d, len(r.findings),
+                "synthesize: bypassing digest for quant-bearing dim %s "
+                "(count=%d, %d chars)",
+                name, counts[name], len(r.findings),
             )
 
         logger.info(
@@ -1310,18 +1375,24 @@ MORE than your default selectivity instinct allows):
   has the version from a manifest file or release log; thread the
   specific version inline. Cite the load-bearing ones (cited SDKs,
   blocking-version-of bugs, current-deployed versions).
-- Quantitative claims: **≥60 distinct quant claims** (dollar amounts,
-  percentages, counts, rates, sizes). The MERGED QUANTITATIVE CLAIMS
-  ROSTER above is the union of every number the dim runners surfaced —
-  treat it as a checklist, not a suggestion. **Walk the roster row by
-  row** and ensure every entry with a meaningful context column appears
-  somewhere in the report. Roster entries with thin context can be
-  grouped (e.g. multiple per-workload costs under one workload table),
-  but they cannot be dropped. Strong research reports cite 100-200
-  specific numbers per memo (using the forms `$<N>M <kind> budget`,
+- Quantitative claims: preserve every row of the MERGED QUANTITATIVE
+  CLAIMS ROSTER above that has a meaningful context column. The roster
+  is the union of every number the dim runners surfaced — treat it as a
+  CHECKLIST you must visibly tick off, not a suggestion. **Walk the
+  roster row by row** and ensure every entry with a meaningful context
+  column appears somewhere in the report VERBATIM (do not round, do not
+  paraphrase "5 million" when the source said `5M`). Roster entries
+  with thin context can be grouped (e.g. multiple per-workload costs
+  under one workload table), but they cannot be dropped. **THE COMMON
+  FAILURE MODE: the model emits a fraction of the roster and stops.
+  Count your distinct quant claims before submitting; if it's well
+  below the roster size, you have not finished — go back and thread in
+  more from the roster.** Strong research reports cite as many specific
+  numbers as the roster supplies (in the forms `$<N>M <kind> budget`,
   `<N>K users`, `<N> QPS`, `<N> <hardware-class>`, `+<N>% YoY`); reports
-  with under 60 specific numbers read as "high level / sweeping" and
-  lose credibility. **Number density beats prose density** — for entity
+  that surface only a small fraction of the roster read as "high level
+  / sweeping" and lose credibility. **Number density beats prose
+  density** — for entity
   enumeration questions, the prose paragraph "<SUBJECT> runs production
   workloads on <hardware-class>" is much weaker than "<SUBJECT> runs
   production workloads on ~$<N>M of <hardware-class> budget across <N>

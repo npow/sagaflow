@@ -194,6 +194,42 @@ synthesis layer cannot recover a number that was paraphrased away at the
 runner layer, and the revise layer will drop a number that lacks an
 inline source.
 
+ACTIVELY HUNT FOR MAGNITUDE NUMBERS (load-bearing — defends against the
+"operational-detail bias"). The default failure mode is that runners
+surface 4-7-digit operational numbers (request counts, instance-spec
+RAM, cost-table row IDs) and never the K/M/B magnitudes that quantify
+scale (model parameter counts, training dataset sizes, monthly active
+users, annual spend totals). Both kinds are useful, but the magnitude
+numbers are the load-bearing story-tellers. To surface them, run
+explicit "scale-hunt" searches alongside the dim-specific ones:
+
+  - **Population scale**: "<SUBJECT> users" / "<SUBJECT> subscribers" /
+    "<SUBJECT> employees" / "<SUBJECT> teams" — look for counts in M/B
+    form (e.g. "200M+ members", "5K engineers")
+  - **Model scale**: "<SUBJECT> parameters" / "<SUBJECT> model size" /
+    "<SUBJECT> tokens" / "<SUBJECT> embedding dimension" — look for
+    sizes in M/B form ("3B params", "12B tokens", "50K vocabulary")
+  - **Compute scale**: "<SUBJECT> GPU" / "<SUBJECT> A100" / "<SUBJECT>
+    H100" / "<SUBJECT> cluster size" / "<SUBJECT> capacity" — look for
+    counts in K/M form ("4K GPUs", "100K cores")
+  - **Data scale**: "<SUBJECT> training data" / "<SUBJECT> dataset size"
+    / "<SUBJECT> rows" / "<SUBJECT> events/day" — look for counts in
+    M/B form ("100M training examples", "5B events/day")
+  - **Economic scale**: "<SUBJECT> spend" / "<SUBJECT> budget" /
+    "<SUBJECT> cost" / "<SUBJECT> revenue" — look for dollar amounts in
+    K/M/B form ("$224M annual spend", "$95M Q4 budget")
+  - **Temporal scale**: "<SUBJECT> latency" / "<SUBJECT> uptime" /
+    "<SUBJECT> SLO" — look for time/throughput in ms/QPS form
+
+Magnitude numbers tend to live in: executive-summary docs, OKR/strategy
+pages, capacity-plan docs, postmortems, billboard slides, "<system>
+overview" intro pages, and the FIRST PARAGRAPH of system READMEs.
+Operational tables (Maestro workflow histories, instance dashboards,
+cost ledgers) yield 4-7-digit operational numbers but rarely K/M/B
+magnitudes. If a dim's findings are dominated by operational counts and
+have no K/M/B magnitudes, the dim is UNDER-RESEARCHED on scale — run
+2-3 additional scale-hunt searches before submitting.
+
 BREADTH-VIA-GRAPH-TRAVERSAL (load-bearing whenever the dimension involves
 adoption, ownership, integrations, consumers, teams, or any "who uses X /
 who owns X / who depends on X" framing — apply when the dim's focused
