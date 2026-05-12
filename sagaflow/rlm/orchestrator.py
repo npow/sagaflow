@@ -719,9 +719,10 @@ _PER_KIND_CAP: dict[str, int] = {
     "date_specific": 30,
     "version_id": 25,
     # Quant claims (dollar amounts, percentages, counts with units) — pool
-    # typically has 30-80 of these once a COST-ECONOMICS dim runs. Cap to
-    # keep the index focused on load-bearing claims.
-    "quant_claim": 40,
+    # typically has 30-80 in pure-narrative dims, 100-200 once a COST-ECONOMICS
+    # dim runs execute_query. Cap is high because synth uses these as a
+    # checklist; downstream the dedup filter removes URL-encoded artifacts.
+    "quant_claim": 120,
 }
 
 
@@ -1041,9 +1042,49 @@ def synthesize_findings(
     raw_total = sum(len(r.findings) for r in successful)
 
     if use_map_reduce and raw_total > map_reduce_threshold_chars and len(successful) > 1:
+        # Quant-dense dims bypass digest. Measure each dim's quantitative
+        # density (count of regex-matched numbers per 1K chars of findings).
+        # If density > QUANT_DENSITY_THRESHOLD AND total raw chars stays
+        # under the synth context budget, pass that dim's raw findings
+        # directly to Sonnet. Rationale: benchmark of R1 v5 showed
+        # cost-economics dim's findings had 57 distinct quant claims; Haiku
+        # digest at 1200 words paraphrases most of them away (synth went
+        # from 57 distinct in findings to 13 distinct in final report).
+        # Direct path preserves the numbers.
+        import re as _re
+        _quant_pat = _CITATION_PATTERNS.get("quant_claim", "")
+        def _quant_density(text: str) -> float:
+            if not text or not _quant_pat:
+                return 0.0
+            count = len(_re.findall(_quant_pat, text))
+            return count / max(1, len(text) / 1000.0)
+
+        # Threshold: >5 quant claims per 1K chars = "quant-dense" dim.
+        # Typical narrative dims sit at 0.2-1.0; cost/usage dims with
+        # execute_query results sit at 8-15.
+        QUANT_DENSITY_THRESHOLD = 5.0
+
+        densities = {r.dimension.name: _quant_density(r.findings) for r in successful}
+        bypass_set: set[str] = set()
+        bypass_chars = 0
+        # Allow up to 60K chars of bypass (keeps synth prompt under ~250K total).
+        BYPASS_CHAR_BUDGET = 60_000
+        for name, d in sorted(densities.items(), key=lambda kv: -kv[1]):
+            if d < QUANT_DENSITY_THRESHOLD:
+                break
+            r = next(r for r in successful if r.dimension.name == name)
+            if bypass_chars + len(r.findings) > BYPASS_CHAR_BUDGET:
+                continue
+            bypass_set.add(name)
+            bypass_chars += len(r.findings)
+            logger.info(
+                "synthesize: bypassing digest for quant-dense dim %s "
+                "(density=%.1f, %d chars)", name, d, len(r.findings),
+            )
+
         logger.info(
-            "synthesize: map-reduce path (%d dims, %d raw chars)",
-            len(successful), raw_total,
+            "synthesize: map-reduce path (%d dims, %d raw chars, %d dims bypass digest)",
+            len(successful), raw_total, len(bypass_set),
         )
         digests: dict[str, str] = {}
         with ThreadPoolExecutor(max_workers=min(8, len(successful))) as pool:
@@ -1052,7 +1093,7 @@ def synthesize_findings(
                     _compress_dimension_findings,
                     query, r.dimension.name, r.findings, r.tool_log,
                 ): r
-                for r in successful
+                for r in successful if r.dimension.name not in bypass_set
             }
             for fut in as_completed(futures):
                 r = futures[fut]
@@ -1074,6 +1115,18 @@ def synthesize_findings(
                         f" — use these for inline links)\n"
                         f"{_cit}\n"
                     )
+        # Bypass dims get full raw findings + cit_index inline.
+        for r in successful:
+            if r.dimension.name in bypass_set:
+                _cit = _format_citation_index(_extract_citations(r.findings + "\n" + r.tool_log))
+                digests[r.dimension.name] = (
+                    f"_(passed raw to synth — quant-dense dim, "
+                    f"digest skipped to preserve numbers)_\n\n"
+                    f"{r.findings}\n\n"
+                    f"### Citation index (extracted from raw findings + runner tool-call trajectory"
+                    f" — use these for inline links)\n"
+                    f"{_cit}\n"
+                )
         findings_text = ""
         for r in successful:
             digest = digests.get(r.dimension.name, "")
@@ -1243,20 +1296,29 @@ MORE than your default selectivity instinct allows):
   has the version from a manifest file or release log; thread the
   specific version inline. Cite the load-bearing ones (cited SDKs,
   blocking-version-of bugs, current-deployed versions).
-- Quantitative claims: **≥40 distinct quant claims** (dollar amounts,
+- Quantitative claims: **≥60 distinct quant claims** (dollar amounts,
   percentages, counts, rates, sizes). The MERGED QUANTITATIVE CLAIMS
   ROSTER above is the union of every number the dim runners surfaced —
-  thread the load-bearing ones into the report's narrative. Strong
-  research reports cite 100-200 specific numbers per memo (using the
-  forms `$<N>M <kind> budget`, `<N>K users`, `<N> QPS`,
-  `<N> <hardware-class>`, `+<N>% YoY`); reports with under 40 specific
-  numbers read as "high level / sweeping" and lose credibility.
-  **Number density beats prose density** — for entity enumeration
-  questions, the prose paragraph "<SUBJECT> runs production workloads
-  on <hardware-class>" is much weaker than "<SUBJECT> runs production
-  workloads on ~$<N>M of <hardware-class> budget across <N>
-  <model-class-A> and <N> <model-class-B>." Always prefer the form
-  with specific numbers and units when the roster supplies them.
+  treat it as a checklist, not a suggestion. **Walk the roster row by
+  row** and ensure every entry with a meaningful context column appears
+  somewhere in the report. Roster entries with thin context can be
+  grouped (e.g. multiple per-workload costs under one workload table),
+  but they cannot be dropped. Strong research reports cite 100-200
+  specific numbers per memo (using the forms `$<N>M <kind> budget`,
+  `<N>K users`, `<N> QPS`, `<N> <hardware-class>`, `+<N>% YoY`); reports
+  with under 60 specific numbers read as "high level / sweeping" and
+  lose credibility. **Number density beats prose density** — for entity
+  enumeration questions, the prose paragraph "<SUBJECT> runs production
+  workloads on <hardware-class>" is much weaker than "<SUBJECT> runs
+  production workloads on ~$<N>M of <hardware-class> budget across <N>
+  <model-class-A> and <N> <model-class-B>." Always prefer the form with
+  specific numbers and units when the roster supplies them. **For
+  quant-dense dimensions whose findings are passed RAW (not digested)
+  — recognizable by the `_(passed raw to synth — quant-dense dim,
+  digest skipped to preserve numbers)_` marker — preserve every dollar
+  amount, percentage, and count from those findings in the report,
+  organized into per-workload / per-team tables. The raw pass-through
+  exists precisely so those numbers reach the final report.**
 
 HOW TO CITE:
 - Each dimension's `### Citation index` section is a verbatim, capped list
