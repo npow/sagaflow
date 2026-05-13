@@ -22,9 +22,12 @@ Usage:
 Env vars (must be set on the worker):
     RLM_API_BASE          OpenAI-compatible base URL (e.g. MGP proxy)
     RLM_API_KEY           API key (defaults to "sk-dummy" for MGP proxy)
-    SAGAFLOW_RLM_TOOLS    Optional: import path of RlmTool list (e.g.
-                          "sagaflow_nflx.rlm_tools:TOOLS"). If unset, only the
-                          built-in `read_file` tool is available.
+    SAGAFLOW_RLM_TOOLS    Optional: dotted module path containing a TOOLS list
+                          (e.g. "sagaflow_nflx.rlm_tools"). The module:attr form
+                          is NOT supported — sagaflow.rlm.tools._load_module_tools
+                          accepts only a module path and looks for a hardcoded
+                          `TOOLS` attribute. If unset, only the built-in
+                          `read_file` tool is available.
 """
 
 from __future__ import annotations
