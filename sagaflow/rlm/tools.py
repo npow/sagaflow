@@ -89,12 +89,23 @@ def _load_entry_point_tools() -> list[RlmTool]:
 
 
 def _load_module_tools(module_path: str) -> list[RlmTool]:
-    """Load tools from a dotted module path (expects a ``TOOLS`` list)."""
+    """Load tools from ``module`` or ``module:attr``.
+
+    Two accepted forms:
+    - ``sagaflow_nflx.rlm_tools`` — imports the module, looks for ``TOOLS``.
+    - ``sagaflow_nflx.rlm_tools:CUSTOM`` — imports the module, looks for ``CUSTOM``.
+
+    Either form must point at a list of callables.
+    """
+    if ":" in module_path:
+        mod_name, attr_name = module_path.split(":", 1)
+    else:
+        mod_name, attr_name = module_path, "TOOLS"
     try:
-        mod = importlib.import_module(module_path)
-        tools_list: Any = getattr(mod, "TOOLS", None)
+        mod = importlib.import_module(mod_name)
+        tools_list: Any = getattr(mod, attr_name, None)
         if tools_list is None:
-            logger.warning("Module %s has no TOOLS list", module_path)
+            logger.warning("Module %s has no %s list", mod_name, attr_name)
             return []
         return [t for t in tools_list if callable(t)]
     except Exception:
