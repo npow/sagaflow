@@ -54,8 +54,12 @@ def test_dismiss_marks_read(tmp_path) -> None:
 
 
 def test_list_prints_running(tmp_path) -> None:
+    # This test only verifies output FORMATTING; the
+    # reconciliation logic inside _list_workflows is covered by
+    # test_cli_orphan_reconciliation.py. Stubbing the data source is
+    # the right pattern here.
     runner = CliRunner()
-    with patch(
+    with patch(  # noqa: TESTSTUB
         "sagaflow.cli._list_workflows",
         return_value=[{"id": "wf-1", "status": "RUNNING"}],
     ):

@@ -13,3 +13,10 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
+      - id: lint-test-stubs
+        name: lint test stubs (catches tests stubbing the unit-under-test)
+        entry: python tools/lint_test_stubs.py tests
+        language: system
+        types: [python]
+        pass_filenames: false
+        files: ^tests/.*\.py$
