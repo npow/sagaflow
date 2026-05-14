@@ -195,18 +195,51 @@ def _run_description(run_id: str) -> str:
 
 
 def _list_workflows() -> list[dict[str, str]]:
-    """Return recent sagaflow workflows from Temporal as {id, status, description} rows."""
+    """Return recent sagaflow workflows as {id, status, description} rows.
+
+    Reconciles Temporal's view with the local run_manifest.json. Temporal
+    sometimes retains RUNNING state long after the workflow stopped (timed
+    out, crashed, or was orphaned mid-execution); the manifest is updated
+    eagerly by ``finalize_manifest`` and by ``finalize_manifest`` cleanups,
+    so any terminal status in the manifest is more trustworthy than
+    Temporal's view. The reconciliation rule: if manifest status is
+    terminal (COMPLETED / FAILED / TERMINATED / CANCELED / TIMED_OUT),
+    that wins; otherwise fall back to Temporal's status. This prevents
+    ``sagaflow list`` from indefinitely showing dead runs under RUNNING.
+    """
     import asyncio as _a
+    import json as _json
+    from pathlib import Path
 
     from sagaflow.temporal_client import TASK_QUEUE, connect
+
+    _TERMINAL = {"COMPLETED", "FAILED", "TERMINATED", "CANCELED", "TIMED_OUT"}
+    runs_dir = Path.home() / ".sagaflow" / "runs"
+
+    def _manifest_status(run_id: str) -> str | None:
+        m_path = runs_dir / run_id / "run_manifest.json"
+        if not m_path.exists():
+            return None
+        try:
+            return _json.loads(m_path.read_text()).get("status")
+        except (OSError, _json.JSONDecodeError):
+            return None
 
     async def _go() -> list[dict[str, str]]:
         client = await connect()
         rows: list[dict[str, str]] = []
         query = f"TaskQueue = '{TASK_QUEUE}'"
         async for wf in client.list_workflows(query=query):
-            status = wf.status.name if wf.status is not None else "UNKNOWN"
+            temporal_status = wf.status.name if wf.status is not None else "UNKNOWN"
             run_id = wf.id.removeprefix("sagaflow-")
+            manifest_status = _manifest_status(run_id)
+            # Trust the manifest only when it reports a terminal state.
+            # While running, Temporal is more authoritative (manifest may
+            # not yet exist or may lag behind workflow signals).
+            if manifest_status in _TERMINAL:
+                status = manifest_status
+            else:
+                status = temporal_status
             desc = _run_description(run_id)
             rows.append({"id": wf.id, "status": status, "description": desc})
         return rows
@@ -690,12 +723,29 @@ def _probe_stale_runs() -> tuple[str, str | None]:
             continue
         if m.get("status") != "RUNNING":
             continue
+        # Prefer progress.json freshness when present (deep-research and
+        # other progress-emitting workflows). For workflows that don't
+        # emit progress.json (fix-pr, autopilot, etc.), fall back to the
+        # most-recent mtime of any file in the run dir — same principle:
+        # if NOTHING has changed in N minutes the workflow is wedged.
+        # Without this fallback, RUNNING manifests for non-progress
+        # workflows are silently never flagged stale.
         progress = run_dir / "progress.json"
-        if not progress.exists():
-            continue
-        age_min = (now - progress.stat().st_mtime) / 60.0
+        if progress.exists():
+            age_min = (now - progress.stat().st_mtime) / 60.0
+            signal = "progress.json"
+        else:
+            try:
+                newest_mtime = max(
+                    (p.stat().st_mtime for p in run_dir.rglob("*") if p.is_file()),
+                    default=run_dir.stat().st_mtime,
+                )
+            except OSError:
+                continue
+            age_min = (now - newest_mtime) / 60.0
+            signal = "run dir"
         if age_min > STALE_MINUTES:
-            stale.append(f"{run_dir.name} (progress.json {age_min:.0f}m stale)")
+            stale.append(f"{run_dir.name} ({signal} {age_min:.0f}m stale)")
 
     payload_warn = ""
     if log_path.exists():
