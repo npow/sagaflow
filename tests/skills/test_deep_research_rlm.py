@@ -76,6 +76,30 @@ def test_default_python_not_bdi_py310() -> None:
     os.environ.get("CI") == "1",
     reason="CI uses temporalio stubs; subprocess check only meaningful on real env",
 )
+def test_default_python_can_import_dspy() -> None:
+    """DEFAULT_PYTHON must be able to import dspy (needed by rlm/runner.py).
+
+    dspy.RLM is the agent loop driving per-dimension research. Without dspy
+    every research dimension fails with ModuleNotFoundError, producing an empty
+    synthesis with 0 usable findings.
+    """
+    mod = _import_workflow_rlm()
+    result = subprocess.run(
+        [mod.DEFAULT_PYTHON, "-c", "import dspy; assert hasattr(dspy, 'RLM'), 'dspy.RLM missing'"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        f"DEFAULT_PYTHON ({mod.DEFAULT_PYTHON!r}) cannot import dspy or lacks dspy.RLM.\n"
+        f"stderr: {result.stderr.strip()}\n"
+        "Install dspy-ai>=3.0.0 in the sagaflow uv venv."
+    )
+
+
+@pytest.mark.skipif(
+    os.environ.get("CI") == "1",
+    reason="CI uses temporalio stubs; subprocess check only meaningful on real env",
+)
 def test_default_python_can_import_temporalio() -> None:
     """Subprocess with DEFAULT_PYTHON must be able to import temporalio.
 
