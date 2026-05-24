@@ -609,6 +609,10 @@ async def run_shell_activity(inp: RunShellInput) -> RunShellResult:
         if proc is not None:
             proc.kill()
         return RunShellResult(stdout="", stderr="timeout", exit_code=124, timed_out=True)
+    except asyncio.CancelledError:
+        if proc is not None:
+            proc.kill()
+        raise
     finally:
         heartbeat_task.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
