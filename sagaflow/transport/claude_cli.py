@@ -85,6 +85,11 @@ class ClaudeCliTransport:
             raise ClaudeCliError(
                 f"`{self._command} -p` timed out after {timeout_seconds}s"
             ) from exc
+        except asyncio.CancelledError:
+            # Temporal cancels activities via CancelledError, not TimeoutError.
+            # We can't await here (we're already being cancelled), so kill synchronously.
+            _terminate_sync(process)
+            raise
 
         stdout = stdout_bytes.decode("utf-8", errors="replace")
         stderr = stderr_bytes.decode("utf-8", errors="replace")
@@ -132,6 +137,20 @@ def _parse_json_result(stdout: str, stderr: str, exit_code: int) -> ClaudeCliRes
         cache_read_input_tokens=cache_read_input_tokens,
         total_cost_usd=total_cost_usd,
     )
+
+
+def _terminate_sync(process: asyncio.subprocess.Process) -> None:
+    """Kill the process group synchronously — used when awaiting is not safe (CancelledError)."""
+    if process.returncode is not None:
+        return
+    try:
+        pgid = os.getpgid(process.pid)
+        os.killpg(pgid, signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        try:
+            process.kill()
+        except (OSError, ProcessLookupError):
+            pass
 
 
 async def _terminate(process: asyncio.subprocess.Process) -> None:

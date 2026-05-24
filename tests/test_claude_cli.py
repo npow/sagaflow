@@ -1,4 +1,5 @@
 import asyncio
+import signal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -82,3 +83,37 @@ async def test_call_raises_on_timeout() -> None:
         with pytest.raises(ClaudeCliError) as exc:
             await transport.call(prompt="p", timeout_seconds=0.1)
     assert "timed out" in str(exc.value).lower()
+
+
+async def test_cancellation_kills_subprocess() -> None:
+    """When the calling task is cancelled (e.g. Temporal activity cancel), subprocess is SIGKILL'd.
+
+    Regression test: CancelledError previously fell through without calling _terminate,
+    leaving the claude subprocess running indefinitely (observed: 4+ day zombie).
+    """
+    proc = AsyncMock()
+    proc.returncode = None
+    proc.pid = 99999
+
+    async def hang(input=None):
+        await asyncio.sleep(100)
+        return (b"", b"")
+
+    proc.communicate = hang
+
+    killed: list[tuple[int, int]] = []
+
+    with patch("asyncio.create_subprocess_exec", return_value=proc):
+        with patch("os.getpgid", return_value=99999):
+            with patch("os.killpg", side_effect=lambda pgid, sig: killed.append((pgid, sig))):
+                transport = ClaudeCliTransport()
+                task = asyncio.create_task(transport.call(prompt="p", timeout_seconds=30.0))
+                await asyncio.sleep(0.01)
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+
+    assert any(sig == signal.SIGKILL for _, sig in killed), (
+        "subprocess must be SIGKILL'd when calling task is cancelled; "
+        f"got signals: {killed}"
+    )
