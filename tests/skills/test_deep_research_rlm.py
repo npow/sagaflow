@@ -16,7 +16,6 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -226,8 +225,6 @@ async def test_workflow_rlm_run_shell_receives_correct_command(tmp_path) -> None
     - passes --query with the seed
     - passes --python-path so sub-processes use the same interpreter
     """
-    import os as _os
-
     try:
         from temporalio.testing import WorkflowEnvironment
         from temporalio.worker import Worker
