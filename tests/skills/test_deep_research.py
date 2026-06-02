@@ -712,3 +712,111 @@ async def test_expansion_direction_ids_use_next_round(tmp_path) -> None:
         f"Round 2 findings should use d_r2_ prefix (matching next round, not current). "
         f"Found: {[f.name for f in findings_dir.glob('*.md')]}"
     )
+
+
+async def test_progress_json_stays_small_across_many_rounds(tmp_path) -> None:
+    """Regression: progress.json must not grow unboundedly across rounds.
+
+    Root cause: all_sources_seen accumulated every source URL seen across all
+    rounds and was serialized to disk on every update. At 7 rounds × 20
+    researchers × 50+ sources each = 500KB+ which hit the sagaflow transport
+    boundary limit and terminated the run before synthesis.
+
+    Fix: all_sources_seen is kept in-memory only; only the count is written.
+    This test simulates 5 rounds where each researcher returns 100 unique source
+    URLs. The old code would produce ~50KB of source URLs in progress.json;
+    the fixed code must stay under 20KB.
+    """
+    _call_count = 0
+
+    @activity.defn(name="spawn_subagent")
+    async def _fake_many_sources(inp: SpawnSubagentInput) -> dict[str, str]:
+        nonlocal _call_count
+        _call_count += 1
+
+        if inp.role == "lang-detect":
+            return {"AUTHORITATIVE_LANGUAGES": '["en"]', "COVERAGE_EXPECTATION": "en_dominant"}
+        if inp.role == "novelty-classify":
+            return {
+                "NOVELTY_CLASS": "familiar",
+                "RECALLED_SOURCES": json.dumps([
+                    {"title": f"Paper {i}", "authors_or_org": "Org", "year": 2022, "confidence": "high"}
+                    for i in range(3)
+                ]),
+                "VERIFIED_COUNT": "3",
+            }
+        if inp.role == "dim-discover":
+            dirs = [
+                {"id": f"d{i}", "dimension": "HOW", "question": f"Q{i}?", "priority": "high"}
+                for i in range(1, 4)
+            ]
+            return {"DIRECTIONS": json.dumps(dirs)}
+        if inp.role == "researcher":
+            # Each researcher returns 100 unique source URLs — simulates production scale.
+            # Old code wrote ALL of these to progress.json on every round update.
+            sources = [f"https://example.com/source-{_call_count}-{j}" for j in range(100)]
+            return {
+                "FINDINGS": "Findings.",
+                "SOURCES": json.dumps(sources),
+                "CLAIMS": json.dumps([
+                    {"claim": "X", "source": sources[0],
+                     "corroboration": "single_source", "recency_class": "fresh"}
+                ]),
+            }
+        if inp.role == "direction-expander":
+            return {"DIRECTIONS": "[]"}
+        if inp.role == "coord-summary":
+            return {"COORD_SUMMARY": "## Round Summary\n\nMainstream: ..."}
+        if inp.role == "verifier":
+            return {
+                "VERIFIED": "[]", "MISMATCHES": "[]", "UNVERIFIABLE": "[]",
+                "SAMPLING_STRATEGY": "{}",
+            }
+        if inp.role == "synth":
+            return {
+                "REPORT": (
+                    "# Research Report\n\n## Executive Summary\n\nFindings.\n\n"
+                    "## Cross-cutting analysis\n\n| Dimension | Directions Explored |\n|---|---|\n\n"
+                    "## Fact Verification Results\n\nVerified: 0\n"
+                ),
+            }
+        return {}
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=TASK_QUEUE,
+            workflows=[DeepResearchWorkflow],
+            activities=[write_artifact, emit_finding, finalize_manifest_activity, _fake_many_sources],
+            workflow_runner=_SANDBOX,
+        ):
+            await env.client.execute_workflow(
+                DeepResearchWorkflow.run,
+                DeepResearchInput(
+                    run_id="dr-small-progress",
+                    seed="Topic",
+                    inbox_path=str(tmp_path / "INBOX.md"),
+                    run_dir=str(tmp_path / "run"),
+                    max_directions=3,
+                    max_rounds=5,
+                    notify=False,
+                ),
+                id="dr-small-progress",
+                task_queue=TASK_QUEUE,
+            )
+
+    progress_file = tmp_path / "run" / "progress.json"
+    assert progress_file.exists(), "progress.json must be written"
+    size_bytes = progress_file.stat().st_size
+    # Each researcher returns 100 sources × ~50 bytes each = 5KB per researcher.
+    # 5 rounds × 3 researchers × 5KB = 75KB in old code.
+    # Fixed code writes only the count — must stay under 20KB regardless of sources.
+    assert size_bytes < 20_000, (
+        f"progress.json must stay under 20KB across many rounds "
+        f"(regression: all_sources_seen was serialized to disk). "
+        f"Got {size_bytes} bytes."
+    )
+    progress = json.loads(progress_file.read_text())
+    # Count is written, not the full URL list.
+    assert "all_sources_count" in progress, "all_sources_count must be in progress"
+    assert "all_sources_seen" not in progress, "all_sources_seen must NOT be serialized to disk"

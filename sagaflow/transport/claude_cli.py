@@ -16,6 +16,15 @@ class ClaudeCliError(RuntimeError):
     """Subprocess failure: nonzero exit, timeout, or transport error."""
 
 
+class BudgetExhaustedError(ClaudeCliError):
+    """``claude -p`` exited because --max-budget-usd was hit.
+
+    Listed in NON_RETRYABLE_ERRORS — retrying just spends the cap again.
+    The workflow-level handler should mark this researcher failed and
+    move on, not retry up to 4× and burn 4× the budget.
+    """
+
+
 @dataclass
 class ClaudeCliResult:
     stdout: str
@@ -51,6 +60,7 @@ class ClaudeCliTransport:
         permission_mode: str | None = None,
         dangerously_skip_permissions: bool = False,
         mcp_config_path: str | None = None,
+        max_budget_usd: float | None = None,
     ) -> ClaudeCliResult:
         args = [self._command, "-p", "--output-format", "json"]
         if mcp_config_path:
@@ -65,6 +75,8 @@ class ClaudeCliTransport:
             args.extend(["--permission-mode", permission_mode])
         if allowed_tools:
             args.extend(["--allowedTools", *allowed_tools])
+        if max_budget_usd is not None and max_budget_usd > 0:
+            args.extend(["--max-budget-usd", str(max_budget_usd)])
         env = os.environ.copy()
         env["IS_SANDBOX"] = "1"
         process = await asyncio.create_subprocess_exec(
@@ -96,6 +108,19 @@ class ClaudeCliTransport:
         if process.returncode != 0:
             if stdout.strip() and "Hook cancelled" in stderr:
                 return _parse_json_result(stdout, stderr, process.returncode or 1)
+            # --max-budget-usd cap hit. Surfaces in stderr (or sometimes
+            # stdout) as "max budget", "budget exhausted", "budget limit",
+            # or "budget exceeded". Raise non-retryable so Temporal doesn't
+            # spend the cap 4× more on retries.
+            combined = (stderr + "\n" + stdout).lower()
+            if any(phrase in combined for phrase in (
+                "max budget", "budget exhausted", "budget exceeded",
+                "budget limit", "max-budget-usd",
+            )):
+                raise BudgetExhaustedError(
+                    f"`{self._command} -p` hit --max-budget-usd cap "
+                    f"(exit={process.returncode}): {stderr.strip()[:500]}"
+                )
             raise ClaudeCliError(
                 f"`{self._command} -p` exited with exit code {process.returncode}: {stderr.strip()}"
             )

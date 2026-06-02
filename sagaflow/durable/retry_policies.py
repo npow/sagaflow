@@ -22,6 +22,12 @@ NON_RETRYABLE_ERRORS: list[str] = [
     "PayloadTooLargeError",
     "WorkflowPayloadSizeError",
     "PayloadSizeError",
+    # Per-call budget cap (--max-budget-usd) hit. Retrying spends the cap
+    # again. 4 retries × $8 cap × N researchers = deathspiral.
+    "BudgetExhaustedError",
+    # Workflow-level cumulative cap hit (sagaflow.budget.enforcer). The
+    # check is deterministic — retrying just re-evaluates the same cap.
+    "BudgetExceededError",
 ]
 
 

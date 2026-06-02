@@ -101,6 +101,10 @@ class SpawnSubagentInput:
     # deployments where filesystem isn't shared.
     user_prompt: str | None = None
     enable_working_memory: bool = False
+    # Per-call dollar cap. Forwarded to claude CLI as --max-budget-usd. The
+    # subagent self-terminates when it hits the cap. None = no cap. Use to
+    # bound runaway tool-loop researchers without affecting typical ones.
+    max_budget_usd: float | None = None
 
 
 _cli_singleton: ClaudeCliTransport | None = None
@@ -350,6 +354,7 @@ async def spawn_subagent(inp: SpawnSubagentInput) -> dict[str, str]:
             label=label,
             dangerously_skip_permissions=True,
             mcp_config_path=effective_mcp_config,
+            max_budget_usd=inp.max_budget_usd,
         )
     finally:
         if beat_task is not None:

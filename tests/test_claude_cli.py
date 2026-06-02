@@ -117,3 +117,130 @@ async def test_cancellation_kills_subprocess() -> None:
         "subprocess must be SIGKILL'd when calling task is cancelled; "
         f"got signals: {killed}"
     )
+
+
+# --- budget cap tests ---
+
+async def test_max_budget_usd_appended_when_set() -> None:
+    proc = AsyncMock()
+    proc.communicate = AsyncMock(return_value=(b'{"result":"ok","total_cost_usd":0.0,"usage":{}}', b""))
+    proc.returncode = 0
+    with patch("asyncio.create_subprocess_exec", return_value=proc) as mock_exec:
+        transport = ClaudeCliTransport()
+        await transport.call(prompt="p", timeout_seconds=30.0, max_budget_usd=8.0)
+    args = mock_exec.call_args[0]
+    assert "--max-budget-usd" in args, f"--max-budget-usd missing from args: {args}"
+    idx = args.index("--max-budget-usd")
+    assert args[idx + 1] == "8.0", f"--max-budget-usd value wrong: {args[idx+1]}"
+
+
+async def test_max_budget_usd_omitted_when_none() -> None:
+    proc = AsyncMock()
+    proc.communicate = AsyncMock(return_value=(b'{"result":"ok","total_cost_usd":0.0,"usage":{}}', b""))
+    proc.returncode = 0
+    with patch("asyncio.create_subprocess_exec", return_value=proc) as mock_exec:
+        transport = ClaudeCliTransport()
+        await transport.call(prompt="p", timeout_seconds=30.0)
+    args = mock_exec.call_args[0]
+    assert "--max-budget-usd" not in args
+
+
+async def test_max_budget_usd_omitted_when_zero() -> None:
+    """0 disables the cap; should not appear in args."""
+    proc = AsyncMock()
+    proc.communicate = AsyncMock(return_value=(b'{"result":"ok","total_cost_usd":0.0,"usage":{}}', b""))
+    proc.returncode = 0
+    with patch("asyncio.create_subprocess_exec", return_value=proc) as mock_exec:
+        transport = ClaudeCliTransport()
+        await transport.call(prompt="p", timeout_seconds=30.0, max_budget_usd=0.0)
+    args = mock_exec.call_args[0]
+    assert "--max-budget-usd" not in args
+
+
+async def test_budget_exhausted_raises_specific_error() -> None:
+    """Non-zero exit with budget-related stderr must raise BudgetExhaustedError, not generic."""
+    from sagaflow.transport.claude_cli import BudgetExhaustedError
+    for stderr_msg in (
+        b"max budget exceeded",
+        b"budget exhausted",
+        b"hit budget limit",
+        b"Error: max-budget-usd reached",
+        b"BUDGET EXCEEDED for this call",
+    ):
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(return_value=(b"", stderr_msg))
+        proc.returncode = 1
+        with patch("asyncio.create_subprocess_exec", return_value=proc):
+            transport = ClaudeCliTransport()
+            with pytest.raises(BudgetExhaustedError) as exc:
+                await transport.call(prompt="p", timeout_seconds=30.0, max_budget_usd=8.0)
+        assert isinstance(exc.value, ClaudeCliError), "BudgetExhaustedError must subclass ClaudeCliError"
+
+
+async def test_non_budget_stderr_raises_generic_error() -> None:
+    """Stderr without budget keywords must raise generic ClaudeCliError, not BudgetExhaustedError."""
+    from sagaflow.transport.claude_cli import BudgetExhaustedError
+    proc = AsyncMock()
+    proc.communicate = AsyncMock(return_value=(b"", b"network timeout"))
+    proc.returncode = 1
+    with patch("asyncio.create_subprocess_exec", return_value=proc):
+        transport = ClaudeCliTransport()
+        with pytest.raises(ClaudeCliError) as exc:
+            await transport.call(prompt="p", timeout_seconds=30.0)
+    # Must be the generic class, not the budget subclass — generic is retryable
+    assert not isinstance(exc.value, BudgetExhaustedError), (
+        "non-budget failures must raise the retryable generic ClaudeCliError"
+    )
+
+
+async def test_budget_exhausted_in_non_retryable_errors_list() -> None:
+    """Belt-and-suspenders: the type name must appear in NON_RETRYABLE_ERRORS so Temporal
+    won't retry budget cap-hits 4× and burn 4× the cap."""
+    from sagaflow.durable.retry_policies import NON_RETRYABLE_ERRORS
+    assert "BudgetExhaustedError" in NON_RETRYABLE_ERRORS
+    assert "BudgetExceededError" in NON_RETRYABLE_ERRORS  # workflow-level cap
+
+
+async def test_split_token_fields_recorded() -> None:
+    """v0.10.16: regular input / cache_creation / cache_read recorded separately."""
+    import json as _json
+    payload = _json.dumps({
+        "result": "ok",
+        "total_cost_usd": 0.42,
+        "usage": {
+            "input_tokens": 100,
+            "cache_creation_input_tokens": 500,
+            "cache_read_input_tokens": 9400,
+            "output_tokens": 200,
+        },
+    }).encode()
+    proc = AsyncMock()
+    proc.communicate = AsyncMock(return_value=(payload, b""))
+    proc.returncode = 0
+    with patch("asyncio.create_subprocess_exec", return_value=proc):
+        transport = ClaudeCliTransport()
+        result = await transport.call(prompt="p", timeout_seconds=30.0)
+    assert result.input_tokens == 100, "regular input must NOT include cache tokens"
+    assert result.cache_creation_input_tokens == 500
+    assert result.cache_read_input_tokens == 9400
+    assert result.output_tokens == 200
+    assert result.total_cost_usd == 0.42
+
+
+async def test_bare_key_value_extractor() -> None:
+    """v0.10.15: model output without STRUCTURED_OUTPUT_START/END markers must still parse."""
+    from sagaflow.durable.activities import _extract_json_object
+    # Simulates the AIMS round-2 expander output: prose preamble + bare DIRECTIONS|...
+    raw = (
+        "Looking at round 1 findings, here are follow-ups.\n\n"
+        'DIRECTIONS|[{"id":"d_r2_1","question":"q1"},{"id":"d_r2_2","question":"q2"}]\n'
+        "FOOTNOTES|other content here"
+    )
+    result = _extract_json_object(raw)
+    assert result is not None, "bare KEY|VALUE must parse without START/END markers"
+    assert "DIRECTIONS" in result
+    assert "FOOTNOTES" in result
+    import json as _json
+    parsed = _json.loads(result["DIRECTIONS"])
+    assert len(parsed) == 2
+    assert parsed[0]["id"] == "d_r2_1"
