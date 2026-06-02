@@ -1,11 +1,8 @@
-"""Regression tests for deep-research workflow_rlm — catches the three env bugs
-fixed on 2026-05-24:
+"""Regression tests for the deep-research RLM backend.
 
-  Bug 1 — DEFAULT_PYTHON was hardcoded to /apps/default-python/bin/python3
-           (BDI Python 3.10), which lacks temporalio.
-  Bug 2 — Worker startup didn't export RLM_API_BASE, so the orchestrator
-           fell back to OPENAI_BASE_URL (copilot DP endpoint, returned 404).
-  Bug 3 — RLM_API_BASE was missing /v1, causing 401 from the MGP proxy.
+The RLM orchestration and research prompt policy belong to the deep-research
+skill package, not the sagaflow runtime.  Sagaflow should provide only generic
+DSPy RLM execution utilities and pluggable tools.
 
 These tests run offline (no Temporal server, no LLM calls).
 """
@@ -37,6 +34,74 @@ def _import_workflow_rlm():
     """Load skills.deep_research.workflow_rlm — works in pytest via conftest."""
     import importlib
     return importlib.import_module("skills.deep_research.workflow_rlm")
+
+
+def _import_deep_research_rlm_runner():
+    """Load skills.deep_research.rlm_runner from the configured claude-skills dir."""
+    import importlib
+    return importlib.import_module("skills.deep_research.rlm_runner")
+
+
+def _import_deep_research_rlm_orchestrator():
+    """Load skills.deep_research.rlm_orchestrator from the configured claude-skills dir."""
+    import importlib
+    return importlib.import_module("skills.deep_research.rlm_orchestrator")
+
+
+# ---------------------------------------------------------------------------
+# Ownership boundary — research policy lives in claude-skills, not sagaflow
+# ---------------------------------------------------------------------------
+
+def test_sagaflow_rlm_orchestrator_module_removed() -> None:
+    """Sagaflow must not own the deep-research-specific RLM orchestrator."""
+    sagaflow_root = Path(__file__).resolve().parents[2]
+    assert not (sagaflow_root / "sagaflow" / "rlm" / "orchestrator.py").exists()
+
+
+def test_sagaflow_rlm_runner_is_generic() -> None:
+    """The sagaflow RLM runner must not contain deep-research prompt policy."""
+    import inspect
+    from sagaflow.rlm import runner
+
+    source = inspect.getsource(runner)
+    assert "def run_rlm" in source
+    assert "ResearchSignature" not in source
+    assert "citation-dense dossier" not in source
+    assert "search_codebase" not in source
+
+
+def test_deep_research_owns_rlm_policy_modules() -> None:
+    """The deep-research skill package owns its RLM runner and orchestrator."""
+    runner = _import_deep_research_rlm_runner()
+    orchestrator = _import_deep_research_rlm_orchestrator()
+
+    assert hasattr(runner, "ResearchSignature")
+    assert hasattr(runner, "run_research")
+    assert hasattr(orchestrator, "run_deep_research")
+
+
+def test_deep_research_rlm_runner_writes_real_newlines(tmp_path, monkeypatch) -> None:
+    """Runner findings.md must contain real newlines, not literal '\\n' escapes."""
+    runner = _import_deep_research_rlm_runner()
+
+    class FakeGeneric:
+        trajectory = [{"code": "SUBMIT(...)", "output": "ok"}]
+        iterations = 1
+        elapsed_seconds = 0.1
+        main_model = "fake-main"
+        sub_model = "fake-sub"
+        error = None
+
+        def output(self, name, default=None):
+            return {"findings": "## Finding\n\nBody."}.get(name, default)
+
+    monkeypatch.setattr(runner, "run_rlm", lambda *args, **kwargs: FakeGeneric())
+
+    runner.run_research("newline smoke", run_dir=str(tmp_path))
+
+    findings = (tmp_path / "findings.md").read_text(encoding="utf-8")
+    assert findings.startswith("# Research: newline smoke\n\n## Finding\n\nBody.")
+    assert "\\n" not in findings
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +141,7 @@ def test_default_python_not_bdi_py310() -> None:
     reason="CI uses temporalio stubs; subprocess check only meaningful on real env",
 )
 def test_default_python_can_import_dspy() -> None:
-    """DEFAULT_PYTHON must be able to import dspy (needed by rlm/runner.py).
+    """DEFAULT_PYTHON must be able to import dspy for the deep-research RLM runner.
 
     dspy.RLM is the agent loop driving per-dimension research. Without dspy
     every research dimension fails with ModuleNotFoundError, producing an empty
@@ -124,7 +189,7 @@ def test_default_python_can_import_temporalio() -> None:
     reason="CI uses temporalio stubs",
 )
 def test_default_python_can_import_sagaflow() -> None:
-    """DEFAULT_PYTHON must be able to import sagaflow (needed by the orchestrator)."""
+    """DEFAULT_PYTHON must be able to import sagaflow (needed by generic RLM runner)."""
     mod = _import_workflow_rlm()
     result = subprocess.run(
         [mod.DEFAULT_PYTHON, "-c", "import sagaflow"],
@@ -142,11 +207,10 @@ def test_default_python_can_import_sagaflow() -> None:
 # ---------------------------------------------------------------------------
 
 def test_rlm_workflow_command_uses_rlm_api_base_env(monkeypatch) -> None:
-    """The orchestrator subprocess must inherit RLM_API_BASE, not a hardcoded URL.
+    """The deep-research RLM subprocess must inherit RLM_API_BASE, not hardcode a URL.
 
-    We verify by checking that the module reads from the environment (via
-    sagaflow.rlm.orchestrator's MGP_BASE resolution chain) rather than
-    embedding a fixed URL in the command string.
+    The workflow only assembles a command; the orchestrator resolves API env in
+    the subprocess.  The workflow source must not embed a fixed model-gateway URL.
     """
     mod = _import_workflow_rlm()
 
@@ -219,9 +283,13 @@ def test_installer_rlm_api_base_includes_v1() -> None:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.environ.get("CI") == "1",
+    reason="CI uses temporalio stubs; workflow sandbox smoke needs real temporalio",
+)
 async def test_workflow_rlm_run_shell_receives_correct_command(tmp_path) -> None:
     """DeepResearchWorkflow (RLM backend) must call run_shell with a command that:
-    - invokes the orchestrator module (sagaflow.rlm.orchestrator)
+    - invokes deep-research/rlm_orchestrator.py (not sagaflow.rlm.orchestrator)
     - passes --query with the seed
     - passes --python-path so sub-processes use the same interpreter
     """
@@ -286,8 +354,11 @@ async def test_workflow_rlm_run_shell_receives_correct_command(tmp_path) -> None
     assert captured_commands, "run_shell was never called — workflow didn't reach orchestrator dispatch"
     cmd = captured_commands[0]
 
-    assert "sagaflow.rlm.orchestrator" in cmd, (
-        f"Command must invoke sagaflow.rlm.orchestrator, got: {cmd[:200]!r}"
+    assert "deep-research/rlm_orchestrator.py" in cmd, (
+        f"Command must invoke the deep-research-owned RLM orchestrator, got: {cmd[:200]!r}"
+    )
+    assert "sagaflow.rlm.orchestrator" not in cmd, (
+        f"Command must not invoke sagaflow.rlm.orchestrator, got: {cmd[:200]!r}"
     )
     assert "--query" in cmd, f"Command must include --query flag, got: {cmd[:200]!r}"
     assert "--python-path" in cmd, (

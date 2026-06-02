@@ -37,7 +37,7 @@ def read_file(*, path: str, max_lines: int = 200) -> str:
         max_lines: Maximum lines to read.
 
     Returns:
-        File contents (truncated if necessary).
+        File contents with stable 1-based line numbers, truncated if necessary.
     """
     try:
         p = Path(path)
@@ -46,9 +46,11 @@ def read_file(*, path: str, max_lines: int = 200) -> str:
         if not p.is_file():
             return f"[read_file: {path} is not a file]"
         lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+        kept = lines[:max_lines]
+        numbered = [f"{i}:{line}" for i, line in enumerate(kept, 1)]
         if len(lines) > max_lines:
-            return "\n".join(lines[:max_lines]) + f"\n... ({len(lines) - max_lines} more lines)"
-        return "\n".join(lines)
+            numbered.append(f"... ({len(lines) - max_lines} more lines)")
+        return "\n".join(numbered)
     except Exception as exc:
         return f"[read_file error: {exc}]"
 

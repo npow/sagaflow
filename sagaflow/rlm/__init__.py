@@ -1,17 +1,14 @@
-"""RLM (Recursive Language Model) research — DSPy sandbox-based research execution."""
+"""Generic DSPy RLM plumbing for Sagaflow skills."""
 
+from sagaflow.rlm.runner import RlmResult, load_signature, run_rlm
 from sagaflow.rlm.tools import BUILTIN_TOOLS, RlmTool, discover_tools, read_file
 
 __all__ = [
     "BUILTIN_TOOLS",
+    "RlmResult",
     "RlmTool",
     "discover_tools",
+    "load_signature",
     "read_file",
-    "run_deep_research",
+    "run_rlm",
 ]
-
-
-def run_deep_research(*args, **kwargs):
-    from sagaflow.rlm.orchestrator import run_deep_research as _run
-
-    return _run(*args, **kwargs)
